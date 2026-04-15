@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/h/NES/nesleveldef.h\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/h/NES/cneseditor.h\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/NES/cnesfile.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/NES/cnesleveldata.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/NES/nesleveldef.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/NES/cnestiles.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/NES/cnesenemydata.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/h/NES/cnesenemydata.h\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/h/NES/cnestiles.h\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/GUI/Dialogs/Advanced/cpalette.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/GUI/Dialogs/Worlds/cgameworlds.cpp\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/h/GUI/Dialogs/Worlds/cgameworlds.h\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/GUI/Dialogs/Editor/clevelinfodlg.cpp\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

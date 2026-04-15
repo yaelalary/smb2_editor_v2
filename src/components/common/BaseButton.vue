@@ -33,13 +33,13 @@ defineEmits<{ (e: 'click', event: MouseEvent): void }>();
 
 const variantClasses: Record<Variant, string> = {
   primary:
-    'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] focus-visible:outline-[var(--color-accent)]',
+    'bg-accent text-white hover:bg-accent-hover focus-visible:outline-accent',
   secondary:
-    'bg-[var(--color-panel)] text-[var(--color-ink)] border border-[var(--color-panel-border)] hover:bg-[var(--color-panel-subtle)] focus-visible:outline-[var(--color-accent)]',
+    'bg-panel text-ink border border-panel-border hover:bg-panel-subtle focus-visible:outline-accent',
   danger:
-    'bg-[var(--color-status-danger)] text-white hover:brightness-95 focus-visible:outline-[var(--color-status-danger)]',
+    'bg-status-danger text-white hover:brightness-95 focus-visible:outline-status-danger',
   ghost:
-    'bg-transparent text-[var(--color-ink-muted)] hover:text-[var(--color-ink)] hover:bg-[var(--color-panel-subtle)] focus-visible:outline-[var(--color-accent)]',
+    'bg-transparent text-ink-muted hover:text-ink hover:bg-panel-subtle focus-visible:outline-accent',
 };
 
 const sizeClasses: Record<Size, string> = {

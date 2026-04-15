@@ -51,13 +51,21 @@ The project uses **Tailwind CSS v4** via `@tailwindcss/vite`. There is
 live in templates, and reusable surface treatment lives in the base
 components.
 
-- **Design tokens** are declared in `src/style.css` inside `@theme { }`
-  and consumed via `var(--color-xxx)` in Tailwind utilities (e.g.
-  `bg-[var(--color-panel)]`). Add a token only when a value is used in
-  **three or more** places; otherwise inline the raw Tailwind class.
+- **Design tokens** are declared in `src/style.css` inside `@theme { }`.
+  Tailwind 4 auto-generates canonical utility classes from every token
+  (`--color-ink` → `text-ink`, `bg-ink`, `border-ink`;
+  `--spacing-panel-library` → `w-panel-library`, etc.). **Always use
+  the canonical class form, not the arbitrary-value form**:
+  - ✅ `class="text-ink-muted bg-panel border-panel-border"`
+  - ❌ `class="text-[var(--color-ink-muted)] bg-[var(--color-panel)]"`
+  The ESLint / Tailwind IDE integration flags the arbitrary-value form
+  as a warning; fix it by using the canonical name. Tokens only appear
+  as `var(--…)` inside `style.css` itself.
+- **Token-promotion threshold:** add a token only when a value is used
+  in **three or more** places; otherwise inline the raw Tailwind class.
 - **Never put raw hex colors, pixel sizes, or magic numbers in
-  templates** for anything that could be themed. Use `var(--color-ink)`
-  or `--spacing-panel-library`, not `#333` or `16rem`.
+  templates** for anything that could be themed. Prefer `text-ink` or
+  `w-panel-library` over `#333` or `w-64`.
 - **Base components in `src/components/common/`** own the cross-cutting
   visual treatment. Today: `BaseButton`, `BasePanel`. Add more when a
   pattern repeats — specifically:

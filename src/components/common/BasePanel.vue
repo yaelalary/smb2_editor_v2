@@ -17,15 +17,15 @@ defineProps<{
 
 <template>
   <section
-    class="flex flex-col bg-[var(--color-panel)] border border-[var(--color-panel-border)] rounded-md overflow-hidden h-full"
+    class="flex flex-col bg-panel border border-panel-border rounded-md overflow-hidden h-full"
   >
     <header
       v-if="title || $slots.header"
-      class="flex items-center justify-between px-3 py-2 border-b border-[var(--color-panel-border)] bg-[var(--color-panel-subtle)]"
+      class="flex items-center justify-between px-3 py-2 border-b border-panel-border bg-panel-subtle"
     >
       <h2
         v-if="title"
-        class="text-sm font-semibold text-[var(--color-ink)]"
+        class="text-sm font-semibold text-ink"
       >
         {{ title }}
       </h2>
@@ -43,7 +43,7 @@ defineProps<{
 
     <footer
       v-if="$slots.footer"
-      class="px-3 py-2 border-t border-[var(--color-panel-border)] bg-[var(--color-panel-subtle)]"
+      class="px-3 py-2 border-t border-panel-border bg-panel-subtle"
     >
       <slot name="footer" />
     </footer>

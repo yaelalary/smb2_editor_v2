@@ -15,7 +15,12 @@
       "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/h/GUI/Dialogs/Worlds/cgameworlds.h\")",
       "Bash(curl -s \"https://raw.githubusercontent.com/loginsinex/smb2/master/smb2/cpp/GUI/Dialogs/Editor/clevelinfodlg.cpp\")",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:www.nesdev.org)",
+      "WebFetch(domain:datacrystal.tcrf.net)",
+      "WebFetch(domain:formats.kaitai.io)",
+      "Bash(npm view *)"
     ]
   }
 }

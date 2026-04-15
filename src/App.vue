@@ -13,6 +13,7 @@ import { computed, ref, shallowRef } from 'vue';
 import BasePanel from './components/common/BasePanel.vue';
 import RomLoader from './components/RomLoader.vue';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
+import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
 import { formatCrc32 } from '@/rom/crc32';
 import type { ValidationSuccess } from '@/rom/validation';
 
@@ -39,6 +40,7 @@ function unloadRom(): void {
 
 <template>
   <DevTilesPreview v-if="devMode === 'tiles'" />
+  <DevLevelsPreview v-else-if="devMode === 'levels'" />
 
   <template v-else>
     <!-- Mobile / tablet viewport: desktop-only editor. -->

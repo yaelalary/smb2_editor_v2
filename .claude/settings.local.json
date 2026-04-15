@@ -20,7 +20,13 @@
       "WebFetch(domain:www.nesdev.org)",
       "WebFetch(domain:datacrystal.tcrf.net)",
       "WebFetch(domain:formats.kaitai.io)",
-      "Bash(npm view *)"
+      "Bash(npm view *)",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npm run *)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://127.0.0.1:5173/)",
+      "Bash(kill %1)",
+      "Bash(wait)"
     ]
   }
 }

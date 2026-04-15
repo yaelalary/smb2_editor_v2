@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens for the SMB2 editor.
+ *
+ * Keep this file small. The rule: if a value appears in more than two
+ * components, add a semantic token here. Otherwise, inline the Tailwind
+ * utility class. Do not create tokens speculatively.
+ */
+@theme {
+  /* Panel surfaces (library sidebar, properties panel, canvas bg). */
+  --color-panel: oklch(99% 0 0);
+  --color-panel-subtle: oklch(96% 0 0);
+  --color-panel-border: oklch(88% 0 0);
+
+  /* Editor text hierarchy. */
+  --color-ink: oklch(20% 0 0);
+  --color-ink-muted: oklch(45% 0 0);
+
+  /* Accent for primary actions (Load ROM, Download, etc.). */
+  --color-accent: oklch(55% 0.18 255);
+  --color-accent-hover: oklch(48% 0.18 255);
+
+  /* Status colors for the ROM memory budget + validation. */
+  --color-status-ok: oklch(65% 0.15 150);
+  --color-status-warn: oklch(75% 0.15 85);
+  --color-status-danger: oklch(60% 0.22 25);
+
+  /* Editor-specific spacing. These match the three-panel layout
+   * (library left, canvas center, properties right). */
+  --spacing-panel-library: 16rem;
+  --spacing-panel-properties: 20rem;
+  --spacing-toolbar-height: 3rem;
+
+  /* Tile grid math: each SMB2 tile is 8px in ROM; we render at 2x by
+   * default for legibility. Override per-component when zooming. */
+  --size-tile: 16px;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-panel-subtle);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

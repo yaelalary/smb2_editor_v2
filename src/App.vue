@@ -15,15 +15,18 @@ import { computed } from 'vue';
 import RomLoader from './components/RomLoader.vue';
 import LevelList from './components/LevelList.vue';
 import LevelCanvas from './components/LevelCanvas.vue';
+import PropertiesPanel from './components/PropertiesPanel.vue';
 import BaseButton from './components/common/BaseButton.vue';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
 import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
 import { useRomStore } from '@/stores/rom';
 import { downloadRom } from '@/persistence/rom-download';
 import { buildRom } from '@/rom/rom-builder';
+import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
 import type { ValidationSuccess } from '@/rom/validation';
 
 const rom = useRomStore();
+useKeyboardShortcuts();
 
 const devMode = computed(() => {
   if (typeof window === 'undefined') return null;
@@ -82,11 +85,11 @@ function onDownload(): void {
     <div
       v-else
       class="hidden lg:grid h-screen"
-      style="grid-template-columns: var(--spacing-panel-library) 1fr; grid-template-rows: var(--spacing-toolbar-height) 1fr;"
+      style="grid-template-columns: var(--spacing-panel-library) 1fr var(--spacing-panel-properties); grid-template-rows: var(--spacing-toolbar-height) 1fr;"
     >
       <!-- Top bar -->
       <header
-        class="col-span-2 flex items-center justify-between px-4 bg-panel border-b border-panel-border"
+        class="col-span-3 flex items-center justify-between px-4 bg-panel border-b border-panel-border"
       >
         <div class="flex items-center gap-3 text-sm">
           <span class="font-semibold">SMB2 Editor</span>
@@ -117,6 +120,9 @@ function onDownload(): void {
 
       <!-- Center: level canvas -->
       <LevelCanvas class="min-h-0" />
+
+      <!-- Right: properties panel -->
+      <PropertiesPanel class="min-h-0 border-l border-panel-border" />
     </div>
   </template>
 </template>

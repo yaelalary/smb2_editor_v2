@@ -18,6 +18,7 @@
  */
 import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { useRomStore } from '@/stores/rom';
+import { useHistoryStore } from '@/stores/history';
 import {
   computeItemPositions,
   levelDimensions,
@@ -44,6 +45,7 @@ const TILE_PX = 16; // CSS pixels per tile — matches METATILE_SIZE
 const DEFAULT_ATLAS_INDEX = 0;
 
 const rom = useRomStore();
+const history = useHistoryStore();
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 
 function draw(canvas: HTMLCanvasElement, block: LevelBlock): void {
@@ -212,8 +214,9 @@ function redraw(): void {
   draw(canvas, block as LevelBlock);
 }
 
-// Redraw on slot change or mount.
+// Redraw on slot change, model mutation, or mount.
 watch(() => rom.activeSlot, redraw);
+watch(() => history.revision, redraw);
 onMounted(async () => {
   // Pre-load atlas images, then draw with real sprites.
   await preloadAllAtlases();

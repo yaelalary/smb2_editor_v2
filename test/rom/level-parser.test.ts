@@ -4,7 +4,7 @@ import {
   parseLevelBlock,
   parseLevelHeader,
 } from '@/rom/level-parser';
-import { serializeLevelBlock } from '@/rom/level-serializer';
+import { serializeLevelBlock, packLevelHeader } from '@/rom/level-serializer';
 import {
   LEVEL_TERMINATOR,
   NES_PTR_EOF,
@@ -74,6 +74,35 @@ describe('parseLevelHeader', () => {
   it('throws on wrong-length input', () => {
     expect(() => parseLevelHeader(new Uint8Array(3))).toThrow(/4 bytes/);
     expect(() => parseLevelHeader(new Uint8Array(5))).toThrow(/4 bytes/);
+  });
+
+  it('constructive round-trip: parse → pack → byte-identical for known header', () => {
+    const header = parseLevelHeader(HEADER_PRG0_1_1);
+    const packed = packLevelHeader(header);
+    expect(Array.from(packed)).toEqual(Array.from(HEADER_PRG0_1_1));
+  });
+
+  it('constructive round-trip: parse → pack → byte-identical for all-max-values header', () => {
+    const raw = new Uint8Array([0xbb, 0xff, 0xff, 0xff]);
+    const header = parseLevelHeader(raw);
+    const packed = packLevelHeader(header);
+    expect(Array.from(packed)).toEqual(Array.from(raw));
+  });
+
+  it('constructive round-trip: parse → pack → byte-identical for all-zero header', () => {
+    const raw = new Uint8Array([0x00, 0x00, 0x00, 0x00]);
+    const header = parseLevelHeader(raw);
+    const packed = packLevelHeader(header);
+    expect(Array.from(packed)).toEqual(Array.from(raw));
+  });
+
+  it('constructive round-trip: parse → pack → byte-identical with mixed reserved bits', () => {
+    // b0=0x44 (reserved bit 6 set, reserved bit 2 set), b1=0xE0 (reserved 7-5 set),
+    // b2=0x00, b3=0xC4 (reserved bits 7-6 set, reserved bit 2 set)
+    const raw = new Uint8Array([0x44, 0xe0, 0x00, 0xc4]);
+    const header = parseLevelHeader(raw);
+    const packed = packLevelHeader(header);
+    expect(Array.from(packed)).toEqual(Array.from(raw));
   });
 });
 

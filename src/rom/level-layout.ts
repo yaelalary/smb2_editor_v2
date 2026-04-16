@@ -21,6 +21,33 @@
 
 import type { LevelBlock, LevelItem } from './model';
 
+/**
+ * Compute the visual FX index for a given slot. This determines which
+ * tileset variant (0-3) to use for variable-size items (48-60).
+ * Ported from C++ `DrawLevelEx` in `clvldraw_worker.cpp`:
+ *   switch(dwCurLevel/30) → fx mapping per SMB2's 7 in-game worlds.
+ */
+export function getFxForSlot(slot: number): number {
+  switch (Math.floor(slot / 30)) {
+    case 0: return 3; // World 1 (slots 0-29)
+    case 1: return 2; // World 2 (slots 30-59)
+    case 2: return 3; // World 3 (slots 60-89)
+    case 3: return 1; // World 4 (slots 90-119)
+    case 4: return 3; // World 5 (slots 120-149)
+    case 5: return 2; // World 6 (slots 150-179)
+    case 6: return 0; // World 7 (slots 180-209)
+    default: return 0;
+  }
+}
+
+/**
+ * Compute the ground tile pattern for a level. Returns an array of
+ * 15 booleans (one per row, top to bottom) indicating which rows
+ * have ground tiles. Derived from GROUND_SET_H/V bitmask tables.
+ */
+// Ground rendering is now handled directly in LevelCanvas.vue using
+// the GROUND_SET_H/V and GROUND_TYPE_H/V tables from nesleveldef.ts.
+
 export interface PositionedItem {
   readonly item: LevelItem;
   /** X in tile units (0 = left edge of the level). */

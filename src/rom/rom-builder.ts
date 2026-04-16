@@ -49,9 +49,13 @@ export function buildRom(
   const output = new Uint8Array(originalRom.byteLength);
   output.set(originalRom);
 
-  const hasEdits = (levelMap.blocks as ReadonlyArray<LevelBlock>).some(
+  const hasLevelEdits = (levelMap.blocks as ReadonlyArray<LevelBlock>).some(
     (b) => b.isEdited,
   );
+  const hasEnemyEdits = (enemyMap.blocks as ReadonlyArray<EnemyBlock>).some(
+    (b) => b.isEdited,
+  );
+  const hasEdits = hasLevelEdits || hasEnemyEdits;
 
   if (!hasEdits) {
     // Conservative overlay — proven byte-identical by round-trip tests.

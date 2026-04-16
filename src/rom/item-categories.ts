@@ -7,8 +7,11 @@
  * grouping, not by raw ID.
  */
 
-/** MIME type for the drag-and-drop transfer payload. */
+/** MIME type for tile item drag-and-drop transfer payload. */
 export const DRAG_MIME = 'application/smb2-item';
+
+/** MIME type for enemy drag-and-drop transfer payload. */
+export const ENEMY_DRAG_MIME = 'application/smb2-enemy';
 
 export interface ItemCategory {
   readonly label: string;

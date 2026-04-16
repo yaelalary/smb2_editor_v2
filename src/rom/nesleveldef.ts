@@ -509,3 +509,114 @@ export const LAYER_LIMITING: readonly number[] = [
   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0, // 32..47
   1,1,0,1,0,0,0,0,0,1,0,0,0,        // 48..60
 ];
+
+// ────────────────────────────────────────────────────────────────────
+// H. Enemy data (ported from g_mEnemyDim[] + inline comments)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Each entry: [spriteId, sizeNibbles].
+ *   spriteId = metatile index in enemy atlas (atlas-8).
+ *   sizeNibbles = (widthTiles << 4) | heightTiles. 0xFF = not renderable.
+ */
+export const ENEMY_DIM: readonly (readonly [number, number])[] = [
+  [0x03, 0x11], //  0  Heart
+  [0x00, 0x11], //  1  Shyguy (red)
+  [0x01, 0x11], //  2  Tweeter
+  [0x02, 0x11], //  3  Shyguy (pink)
+  [0x04, 0x11], //  4  Porcupo
+  [0x05, 0x11], //  5  Snifit (red)
+  [0x06, 0x11], //  6  Snifit (grey)
+  [0x07, 0x11], //  7  Snifit (pink)
+  [0x10, 0x21], //  8  Ostro
+  [0x08, 0x11], //  9  Bob-omb
+  [0x1a, 0x22], // 10  Albatoss (with Bob-omb)
+  [0x1a, 0x12], // 11  Albatoss, goes right
+  [0x11, 0x12], // 12  Albatoss, goes left
+  [0x09, 0x11], // 13  Ninji (running)
+  [0x0a, 0x11], // 14  Ninji (jumping)
+  [0x0b, 0x11], // 15  Beezo (red, swooping)
+  [0x0c, 0x11], // 16  Beezo (grey, flies straight)
+  [0x2f, 0x11], // 17  Wart's bubble
+  [0x13, 0x22], // 18  Pidgit (with carpet)
+  [0x0d, 0x11], // 19  Trouter
+  [0x0e, 0x11], // 20  Hoopstar
+  [0x00, 0x11], // 21  Shyguy, from jars
+  [0x08, 0x11], // 22  Bob-omb, from jars
+  [0x0f, 0x11], // 23  Phanto
+  [0x15, 0x21], // 24  Cobrat (in jar)
+  [0x15, 0x21], // 25  Cobrat (in sand)
+  [0x16, 0x21], // 26  Pokey
+  [0x30, 0x11], // 27  Stray bullet
+  [0x17, 0x21], // 28  Birdo
+  [0x18, 0x22], // 29  Mouser
+  [0x33, 0x11], // 30  Stray egg
+  [0x71, 0x32], // 31  Triclyde
+  [0x35, 0x11], // 32  Stray fireball
+  [0x49, 0x22], // 33  Clawglip
+  [0x1f, 0x11], // 34  Stray rock
+  [0x34, 0x11], // 35  Panser (red)
+  [0x36, 0x11], // 36  Panser (pink)
+  [0x37, 0x11], // 37  Panser (grey)
+  [0x63, 0x21], // 38  Autobomb
+  [0x3f, 0x11], // 39  Stray autobomb fireball
+  [0x64, 0x11], // 40  Whale spout
+  [0x62, 0x11], // 41  Flurry
+  [0x1c, 0x33], // 42  Fryguy
+  [0x1b, 0x11], // 43  Little fryguy
+  [0x4b, 0x33], // 44  Wart
+  [0x40, 0x31], // 45  Hawkmouth (alive)
+  [0x38, 0x11], // 46  Spark (1)
+  [0x38, 0x11], // 47  Spark (2)
+  [0x38, 0x11], // 48  Spark (3)
+  [0x38, 0x11], // 49  Spark (4)
+  [0x41, 0x11], // 50  Small vegetable
+  [0x42, 0x11], // 51  Fresh vegetable
+  [0x41, 0x11], // 52  Vegetable (thrower)
+  [0x43, 0x11], // 53  Turtle shell
+  [0x44, 0x11], // 54  Coin
+  [0x3f, 0x11], // 55  Bomb (explodes)
+  [0xff, 0xff], // 56  Rocket (weird)
+  [0x44, 0x11], // 57  Mushroom block (weird)
+  [0x45, 0x11], // 58  POW block
+  [0x47, 0x12], // 59  Rolling red beam
+  [0x51, 0x21], // 60  Door (sub-space)
+  [0x52, 0x11], // 61  Key
+  [0x53, 0x11], // 62  Potion
+  [0x54, 0x11], // 63  Mushroom
+  [0x55, 0x11], // 64  1-UP mushroom
+  [0x56, 0x11], // 65  Pidgit's carpet
+  [0x70, 0x31], // 66  Hawkmouth (right)
+  [0x40, 0x31], // 67  Hawkmouth (left)
+  [0x58, 0x11], // 68  Crystal ball
+  [0x39, 0x11], // 69  Star
+  [0x3a, 0x11], // 70  Stopwatch
+  [0x21, 0x22], // 71  Albatoss attack
+  [0x0b, 0x11], // 72  Beezo attack
+  [0x30, 0x11], // 73  Stop attack
+  [0x30, 0x11], // 74  Vegetable throw
+];
+
+export const ENEMY_NAMES: readonly string[] = [
+  'Heart', 'Shyguy (red)', 'Tweeter', 'Shyguy (pink)',
+  'Porcupo', 'Snifit (red)', 'Snifit (grey)', 'Snifit (pink)',
+  'Ostro', 'Bob-omb', 'Albatoss + bomb', 'Albatoss (right)',
+  'Albatoss (left)', 'Ninji (running)', 'Ninji (jumping)',
+  'Beezo (red)', 'Beezo (grey)', "Wart's bubble",
+  'Pidgit + carpet', 'Trouter', 'Hoopstar',
+  'Shyguy (from jar)', 'Bob-omb (from jar)', 'Phanto',
+  'Cobrat (jar)', 'Cobrat (sand)', 'Pokey', 'Stray bullet',
+  'Birdo', 'Mouser', 'Stray egg', 'Triclyde',
+  'Stray fireball', 'Clawglip', 'Stray rock',
+  'Panser (red)', 'Panser (pink)', 'Panser (grey)',
+  'Autobomb', 'Autobomb fireball', 'Whale spout', 'Flurry',
+  'Fryguy', 'Little fryguy', 'Wart',
+  'Hawkmouth (alive)', 'Spark (1)', 'Spark (2)', 'Spark (3)', 'Spark (4)',
+  'Small vegetable', 'Fresh vegetable', 'Vegetable (thrower)',
+  'Turtle shell', 'Coin', 'Bomb', 'Rocket',
+  'Mushroom block', 'POW block', 'Rolling beam',
+  'Door (sub-space)', 'Key', 'Potion', 'Mushroom', '1-UP mushroom',
+  "Pidgit's carpet", 'Hawkmouth (right)', 'Hawkmouth (left)',
+  'Crystal ball', 'Star', 'Stopwatch',
+  'Albatoss attack', 'Beezo attack', 'Stop attack', 'Vegetable throw',
+];

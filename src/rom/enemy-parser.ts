@@ -232,6 +232,7 @@ export function parseEnemyBlock(
     byteLength,
     sourceRange,
     referencingSlots,
+    isEdited: false,
   };
 }
 

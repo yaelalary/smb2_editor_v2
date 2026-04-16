@@ -17,7 +17,9 @@ import LevelList from './components/LevelList.vue';
 import LevelCanvas from './components/LevelCanvas.vue';
 import PropertiesPanel from './components/PropertiesPanel.vue';
 import TileLibrary from './components/TileLibrary.vue';
+import EnemyLibrary from './components/EnemyLibrary.vue';
 import BaseButton from './components/common/BaseButton.vue';
+import { useEditorStore } from '@/stores/editor';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
 import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
 import { useRomStore } from '@/stores/rom';
@@ -27,6 +29,7 @@ import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
 import type { ValidationSuccess } from '@/rom/validation';
 
 const rom = useRomStore();
+const editor = useEditorStore();
 useKeyboardShortcuts();
 
 const devMode = computed(() => {
@@ -124,10 +127,44 @@ function onDownload(): void {
       <!-- Left: level list (top 1/3) + tile library (bottom 2/3) -->
       <div
         class="min-h-0 border-r border-panel-border grid"
-        style="grid-template-rows: minmax(0, 1fr) minmax(0, 2fr);"
+        style="grid-template-rows: minmax(0, 1fr) auto minmax(0, 2fr);"
       >
         <LevelList class="min-h-0 overflow-hidden border-b border-panel-border" />
-        <TileLibrary class="min-h-0 overflow-hidden" />
+
+        <!-- Tool tabs: Tiles / Enemies -->
+        <div class="flex border-b border-panel-border bg-panel-subtle">
+          <button
+            :class="[
+              'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
+              editor.activeTool === 'tiles'
+                ? 'bg-panel text-ink border-b-2 border-accent'
+                : 'text-ink-muted hover:text-ink',
+            ]"
+            @click="editor.activeTool = 'tiles'"
+          >
+            Tiles
+          </button>
+          <button
+            :class="[
+              'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
+              editor.activeTool === 'enemies'
+                ? 'bg-panel text-ink border-b-2 border-accent'
+                : 'text-ink-muted hover:text-ink',
+            ]"
+            @click="editor.activeTool = 'enemies'"
+          >
+            Enemies
+          </button>
+        </div>
+
+        <TileLibrary
+          v-if="editor.activeTool === 'tiles'"
+          class="min-h-0 overflow-hidden"
+        />
+        <EnemyLibrary
+          v-else
+          class="min-h-0 overflow-hidden"
+        />
       </div>
 
       <!-- Center: level canvas -->

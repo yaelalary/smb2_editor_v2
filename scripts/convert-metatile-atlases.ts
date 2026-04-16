@@ -51,6 +51,12 @@ const BG_FILES: { index: number; bmpName: string; description: string }[] = [
  * Decode a 24-bit uncompressed BMP and return a pngjs PNG object.
  * Handles the bottom-up row order and BGR→RGB conversion.
  */
+/**
+ * Decode a 24-bit uncompressed BMP to PNG. The pixel at (0,0) of the
+ * BMP is used as the **transparency key**: all pixels matching that
+ * exact color get alpha=0 (fully transparent). This mirrors how the
+ * C++ tool uses LoadBmp with a color key for sprite backgrounds.
+ */
 function bmpToPng(bmpPath: string): PNG {
   const buf = fs.readFileSync(bmpPath);
 
@@ -80,8 +86,15 @@ function bmpToPng(bmpPath: string): PNG {
 
   const png = new PNG({ width, height, colorType: 6 });
 
+  // Read the first pixel (bottom-left in BMP, which is (0, height-1) in
+  // top-down order) as the transparency key color.
+  const keyRow = bottomUp ? height - 1 : 0;
+  const keyOffset = dataOffset + keyRow * rowStride;
+  const keyB = buf[keyOffset]!;
+  const keyG = buf[keyOffset + 1]!;
+  const keyR = buf[keyOffset + 2]!;
+
   for (let y = 0; y < height; y++) {
-    // Source row in the BMP data
     const srcRow = bottomUp ? height - 1 - y : y;
     const srcOffset = dataOffset + srcRow * rowStride;
 
@@ -89,11 +102,15 @@ function bmpToPng(bmpPath: string): PNG {
       const bmpIdx = srcOffset + x * 3;
       const pngIdx = (y * width + x) * 4;
 
-      // BMP stores BGR; PNG needs RGBA
-      png.data[pngIdx] = buf[bmpIdx + 2]!;     // R
-      png.data[pngIdx + 1] = buf[bmpIdx + 1]!; // G
-      png.data[pngIdx + 2] = buf[bmpIdx]!;     // B
-      png.data[pngIdx + 3] = 0xff;             // A
+      const b = buf[bmpIdx]!;
+      const g = buf[bmpIdx + 1]!;
+      const r = buf[bmpIdx + 2]!;
+
+      png.data[pngIdx] = r;
+      png.data[pngIdx + 1] = g;
+      png.data[pngIdx + 2] = b;
+      // Transparency: exact match with key color → alpha 0.
+      png.data[pngIdx + 3] = (r === keyR && g === keyG && b === keyB) ? 0 : 0xff;
     }
   }
 

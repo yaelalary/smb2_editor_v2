@@ -155,11 +155,12 @@ export interface EnemyPage {
  */
 export interface EnemyBlock {
   readonly romOffset: number;
-  readonly pages: ReadonlyArray<EnemyPage>;
+  readonly pages: EnemyPage[];
   /** Length in bytes as originally allocated in the ROM. */
-  readonly byteLength: number;
+  byteLength: number;
   readonly sourceRange: ByteRange;
   readonly referencingSlots: ReadonlyArray<LevelSlotId>;
+  isEdited: boolean;
 }
 
 /**

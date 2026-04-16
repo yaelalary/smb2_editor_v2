@@ -12,9 +12,23 @@
  * placements.
  */
 
-import type { EnemyBlock } from './model';
+import type { EnemyBlock, EnemyPage } from './model';
 
-export function serializeEnemyBlock(block: EnemyBlock): Uint8Array {
+interface SerializableEnemyBlock {
+  readonly pages: ReadonlyArray<EnemyPage>;
+  readonly byteLength: number;
+  readonly romOffset: number;
+  readonly isEdited: boolean;
+}
+
+export function serializeEnemyBlock(block: EnemyBlock | SerializableEnemyBlock): Uint8Array {
+  if (block.isEdited) {
+    return serializeConstructive(block);
+  }
+  return serializeConservative(block);
+}
+
+function serializeConservative(block: EnemyBlock | SerializableEnemyBlock): Uint8Array {
   const out = new Uint8Array(block.byteLength);
   let cursor = 0;
   for (const page of block.pages) {
@@ -45,4 +59,22 @@ export function serializeEnemyBlock(block: EnemyBlock): Uint8Array {
   }
 
   return out;
+}
+
+/**
+ * Re-encode enemy pages from the interpreted model. Much simpler than
+ * level constructive serialization — no cursor encoding needed.
+ * Each page: [sizeByte] [N × (id, (x<<4)|y)].
+ */
+function serializeConstructive(block: EnemyBlock | SerializableEnemyBlock): Uint8Array {
+  const bytes: number[] = [];
+  for (const page of block.pages) {
+    const sizeByte = 1 + page.enemies.length * 2;
+    bytes.push(sizeByte);
+    for (const enemy of page.enemies) {
+      bytes.push(enemy.id & 0x7f);
+      bytes.push(((enemy.x & 0x0f) << 4) | (enemy.y & 0x0f));
+    }
+  }
+  return new Uint8Array(bytes);
 }

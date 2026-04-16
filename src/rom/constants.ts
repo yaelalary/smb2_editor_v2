@@ -100,6 +100,31 @@ export const NES_PTR_LEVELS2 = 0x1f775; // high-byte array
 /** Terminator byte that ends every level's item stream. */
 export const LEVEL_TERMINATOR = 0xff;
 
+// ─── Enemy pointer sub-tables ───────────────────────────────────────
+//
+// Enemy pointers reach the actual data via a three-level chain:
+//
+//   1. Four base pointers at NES_PTR_ENEMY[1..4] each hold a 16-bit CPU
+//      address.
+//   2. Pairs {1,2} and {3,4} locate two 21-byte arrays (one entry per
+//      "world"). For world `w`, these give a hi-byte and a lo-byte that
+//      together form a CPU address pointing to two 10-byte per-level
+//      arrays (the hi-array and the lo-array of per-level pointers).
+//   3. For level `l` within world `w`, the (hi, lo) pair at index `l`
+//      of those per-level arrays combines into the final CPU address
+//      of that slot's enemy data block. Add DELTA_PTR for the ROM
+//      file offset.
+//
+// Total slots = WORLDS * LEVELS_PER_WORLD = 21 * 10 = MAX_LEVELS = 210.
+
+export const NES_PTR_ENEMY1 = 0x1f791;
+export const NES_PTR_ENEMY2 = 0x1f796;
+export const NES_PTR_ENEMY3 = 0x1f79b;
+export const NES_PTR_ENEMY4 = 0x1f7a0;
+
+export const WORLDS = 21;
+export const LEVELS_PER_WORLD = 10;
+
 /** Exactly 4 bytes of packed level header precede every item stream. */
 export const LEVEL_HEADER_BYTES = 4;
 

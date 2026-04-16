@@ -20,6 +20,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseLevelMap } from '@/rom/level-parser';
 import { serializeLevelBlock } from '@/rom/level-serializer';
+import { parseEnemyMap } from '@/rom/enemy-parser';
+import { serializeEnemyBlock } from '@/rom/enemy-serializer';
 
 const FIXTURE_PATH = path.resolve(__dirname, '../fixtures/smb2.nes');
 
@@ -82,12 +84,66 @@ describe.skipIf(!hasFixture())('Level round-trip (conservative mode)', () => {
     // This is a weaker test that documents the invariant: outside the
     // level-data region [NES_PTR_START, NES_PTR_EOF), the PRG bytes
     // are not written by the level serializer. The full-ROM clone-and-
-    // overlay test will land once the enemy/palette serializers exist
-    // (Unit 5 / Unit 17). For now, we assert parse gives us blocks
-    // whose source ranges stay inside the declared region.
+    // overlay test will land once the palette serializer exists
+    // (Unit 17). For now, we assert parse gives us blocks whose source
+    // ranges stay inside the declared region.
     const rom = loadRom();
     const map = parseLevelMap(rom);
 
+    for (const block of map.blocks) {
+      expect(block.sourceRange[0]).toBeGreaterThanOrEqual(0x10010);
+      expect(block.sourceRange[1]).toBeLessThanOrEqual(0x14010);
+    }
+  });
+
+  it('parses every enemy block and re-emits it byte-identically', () => {
+    const rom = loadRom();
+    const map = parseEnemyMap(rom);
+
+    // Enemy region uses 210 slot entries but de-duplicates shared blocks.
+    expect(map.slotToBlock).toHaveLength(210);
+    expect(map.blocks.length).toBeGreaterThan(0);
+    // Sharing is expected in the canonical ROM — if every slot had its
+    // own block the count would be 210; it must be strictly less.
+    expect(map.blocks.length).toBeLessThan(210);
+
+    const hasSharing = map.blocks.some((b) => b.referencingSlots.length > 1);
+    expect(hasSharing).toBe(true);
+
+    const diffs: Array<{ blockIdx: number; range: [number, number] }> = [];
+    for (let i = 0; i < map.blocks.length; i++) {
+      const block = map.blocks[i]!;
+      const serialized = serializeEnemyBlock(block);
+      const original = rom.subarray(
+        block.sourceRange[0],
+        block.sourceRange[1],
+      );
+      if (
+        serialized.byteLength !== original.byteLength ||
+        !serialized.every((b, idx) => b === original[idx])
+      ) {
+        diffs.push({ blockIdx: i, range: [...block.sourceRange] as [number, number] });
+      }
+    }
+
+    if (diffs.length > 0) {
+      throw new Error(
+        `Enemy round-trip mismatch in ${diffs.length} block(s): ` +
+          diffs
+            .slice(0, 5)
+            .map(
+              (d) =>
+                `block#${d.blockIdx} [${d.range[0].toString(16)}..${d.range[1].toString(16)})`,
+            )
+            .join(', '),
+      );
+    }
+    expect(diffs).toHaveLength(0);
+  });
+
+  it('keeps every enemy block inside the shared level-data region', () => {
+    const rom = loadRom();
+    const map = parseEnemyMap(rom);
     for (const block of map.blocks) {
       expect(block.sourceRange[0]).toBeGreaterThanOrEqual(0x10010);
       expect(block.sourceRange[1]).toBeLessThanOrEqual(0x14010);

@@ -99,3 +99,53 @@ export interface LevelMap {
   /** Length = {@link MAX_LEVELS}. Each entry is an index into `blocks`. */
   readonly slotToBlock: ReadonlyArray<number>;
 }
+
+// ─── Enemies ────────────────────────────────────────────────────────
+
+/** One enemy placement: 2 bytes on disk (id + packed x/y). */
+export interface EnemyItem {
+  /** Enemy type ID (0..127, see `g_pszEnemies[]` in the reference tool). */
+  readonly id: number;
+  /** Column within the page (0..15). */
+  readonly x: number;
+  /** Row (0..15). */
+  readonly y: number;
+  /** Original 2 bytes that encoded this enemy. */
+  readonly sourceBytes: Uint8Array;
+  /** ROM-absolute byte range this enemy occupies. */
+  readonly sourceRange: ByteRange;
+}
+
+/** One page inside an enemy block (page index = its position in the block). */
+export interface EnemyPage {
+  /** Size byte that preceded this page, always `1 + 2 * enemies.length`. */
+  readonly sizeByte: number;
+  readonly enemies: ReadonlyArray<EnemyItem>;
+  /** ROM-absolute byte range of the size byte + enemies. */
+  readonly sourceRange: ByteRange;
+}
+
+/**
+ * One physical enemy data block. Like level blocks, multiple slots may
+ * point to the same block. The block's byte length is determined from
+ * outside (via adjacent-pointer distance or trailing-0xFF scan), not
+ * from any terminator inside the block itself.
+ */
+export interface EnemyBlock {
+  readonly romOffset: number;
+  readonly pages: ReadonlyArray<EnemyPage>;
+  /** Length in bytes as originally allocated in the ROM. */
+  readonly byteLength: number;
+  readonly sourceRange: ByteRange;
+  readonly referencingSlots: ReadonlyArray<LevelSlotId>;
+}
+
+/**
+ * Enemy counterpart of {@link LevelMap}. `slotToBlock` is indexed the
+ * same way (0..MAX_LEVELS-1); together with a `LevelMap` it fully
+ * describes which level- and enemy-block each slot references.
+ */
+export interface EnemyMap {
+  readonly blocks: ReadonlyArray<EnemyBlock>;
+  readonly slotToBlock: ReadonlyArray<number>;
+}

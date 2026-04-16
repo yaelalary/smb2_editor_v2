@@ -19,13 +19,15 @@ import BasePanel from '@/components/common/BasePanel.vue';
 import BaseButton from '@/components/common/BaseButton.vue';
 import RomLoader from '@/components/RomLoader.vue';
 import type { ValidationSuccess } from '@/rom/validation';
-import type { LevelBlock, LevelMap } from '@/rom/model';
+import type { EnemyBlock, EnemyMap, LevelBlock, LevelMap } from '@/rom/model';
 import { parseLevelMap, LevelParseError } from '@/rom/level-parser';
-import { LEVEL_REGION_BYTES } from '@/rom/constants';
+import { parseEnemyMap, EnemyParseError } from '@/rom/enemy-parser';
+import { LEVELS_PER_WORLD, LEVEL_REGION_BYTES } from '@/rom/constants';
 
 const loadedRom = shallowRef<ValidationSuccess | null>(null);
 const parseError = ref<string | null>(null);
 const levelMap = shallowRef<LevelMap | null>(null);
+const enemyMap = shallowRef<EnemyMap | null>(null);
 const selectedSlot = ref<number>(0);
 
 function onLoaded(rom: ValidationSuccess): void {
@@ -33,16 +35,18 @@ function onLoaded(rom: ValidationSuccess): void {
   parseError.value = null;
   try {
     levelMap.value = parseLevelMap(rom.rom);
+    enemyMap.value = parseEnemyMap(rom.rom);
     selectedSlot.value = 0;
   } catch (err) {
     const message =
-      err instanceof LevelParseError
+      err instanceof LevelParseError || err instanceof EnemyParseError
         ? err.message
         : err instanceof Error
           ? `${err.name}: ${err.message}`
           : String(err);
     parseError.value = message;
     levelMap.value = null;
+    enemyMap.value = null;
   }
 }
 
@@ -54,40 +58,76 @@ const selectedBlock = computed<LevelBlock | null>(() => {
   return map.blocks[blockIdx] ?? null;
 });
 
+const selectedEnemyBlock = computed<EnemyBlock | null>(() => {
+  const map = enemyMap.value;
+  if (!map) return null;
+  const blockIdx = map.slotToBlock[selectedSlot.value];
+  if (blockIdx === undefined) return null;
+  return map.blocks[blockIdx] ?? null;
+});
+
+const selectedEnemyBlockIdx = computed<number | null>(() => {
+  const map = enemyMap.value;
+  if (!map) return null;
+  return map.slotToBlock[selectedSlot.value] ?? null;
+});
+
+const selectedEnemyStats = computed(() => {
+  const block = selectedEnemyBlock.value;
+  if (!block) return null;
+  const totalEnemies = block.pages.reduce((n, p) => n + p.enemies.length, 0);
+  return {
+    totalEnemies,
+    pageCount: block.pages.length,
+    byteLength: block.byteLength,
+  };
+});
+
 const sharingStats = computed(() => {
   const map = levelMap.value;
-  if (!map) return null;
+  const enemies = enemyMap.value;
+  if (!map || !enemies) return null;
   const sharedBlocks = map.blocks.filter((b) => b.referencingSlots.length > 1);
-  const totalBytes = map.blocks.reduce((acc, b) => acc + b.byteLength, 0);
+  const sharedEnemyBlocks = enemies.blocks.filter(
+    (b) => b.referencingSlots.length > 1,
+  );
+  const levelBytes = map.blocks.reduce((acc, b) => acc + b.byteLength, 0);
+  const enemyBytes = enemies.blocks.reduce((acc, b) => acc + b.byteLength, 0);
   return {
     totalSlots: map.slotToBlock.length,
     uniqueBlocks: map.blocks.length,
     sharedBlocks: sharedBlocks.length,
-    totalBytes,
+    uniqueEnemyBlocks: enemies.blocks.length,
+    sharedEnemyBlocks: sharedEnemyBlocks.length,
+    levelBytes,
+    enemyBytes,
+    totalBytes: levelBytes + enemyBytes,
     maxSharing: Math.max(
       1,
       ...map.blocks.map((b) => b.referencingSlots.length),
+    ),
+    maxEnemySharing: Math.max(
+      1,
+      ...enemies.blocks.map((b) => b.referencingSlots.length),
     ),
   };
 });
 
 /**
- * Format an SMB2 slot index as "W-L" where possible (worlds 1-7 ×
- * levels 1-3 plus warp zones). Matches the vanilla game's 21
- * playable rooms, mirroring the 21-byte "starts" sub-table — but
- * the debug view just shows the raw slot index for indices the
- * shorthand doesn't cover.
+ * Format a slot index using the ROM's own internal layout:
+ * `W{world}:L{level}` where world = slot / LEVELS_PER_WORLD and
+ * level = slot % LEVELS_PER_WORLD. This mirrors exactly how the
+ * enemy pointer sub-tables are organized (21 worlds × 10 levels).
+ *
+ * Note: this is NOT the in-game "World 1-1" mapping. That mapping
+ * lives in NES_PTR_LEVEL_STARTS and involves extra indirection we
+ * haven't parsed yet. The W:L shown here is a debug coordinate for
+ * navigating the raw 210-slot table.
  */
 function slotLabel(slot: number): string {
-  // First 7 worlds × 3 levels = slots 0..20 (rough mapping; the real
-  // ROM layout is more nuanced but this is a debug view, not a player
-  // guide). Fall back to hex for higher indices.
-  if (slot < 21) {
-    const world = Math.floor(slot / 3) + 1;
-    const level = (slot % 3) + 1;
-    return `${world}-${level}`;
-  }
-  return `#${slot}`;
+  const world = Math.floor(slot / LEVELS_PER_WORLD);
+  const level = slot % LEVELS_PER_WORLD;
+  return `W${world}:L${level}`;
 }
 
 function hex(n: number, width = 2): string {
@@ -101,6 +141,7 @@ function bytesToHex(bytes: Uint8Array): string {
 function resetRom(): void {
   loadedRom.value = null;
   levelMap.value = null;
+  enemyMap.value = null;
   parseError.value = null;
 }
 </script>
@@ -163,20 +204,35 @@ function resetRom(): void {
               {{ sharingStats.totalSlots }}
             </dd>
             <dt class="text-ink-muted">
-              Unique blocks
+              Level blocks
             </dt>
             <dd class="font-mono">
               {{ sharingStats.uniqueBlocks }}
+              ({{ sharingStats.sharedBlocks }} shared,
+              max {{ sharingStats.maxSharing }}/block)
             </dd>
             <dt class="text-ink-muted">
-              Shared blocks
+              Enemy blocks
             </dt>
             <dd class="font-mono">
-              {{ sharingStats.sharedBlocks }}
-              (max {{ sharingStats.maxSharing }} slots/block)
+              {{ sharingStats.uniqueEnemyBlocks }}
+              ({{ sharingStats.sharedEnemyBlocks }} shared,
+              max {{ sharingStats.maxEnemySharing }}/block)
             </dd>
             <dt class="text-ink-muted">
-              Data size
+              Level bytes
+            </dt>
+            <dd class="font-mono">
+              {{ sharingStats.levelBytes }}
+            </dd>
+            <dt class="text-ink-muted">
+              Enemy bytes
+            </dt>
+            <dd class="font-mono">
+              {{ sharingStats.enemyBytes }}
+            </dd>
+            <dt class="text-ink-muted">
+              Region usage
             </dt>
             <dd class="font-mono">
               {{ sharingStats.totalBytes }} /
@@ -317,6 +373,100 @@ function resetRom(): void {
             </h3>
             <p class="text-xs font-mono">
               {{ selectedBlock.referencingSlots.map(s => slotLabel(s)).join(', ') }}
+            </p>
+          </section>
+
+          <section
+            v-if="selectedEnemyBlock && selectedEnemyStats"
+            class="pt-3 border-t border-panel-border"
+          >
+            <h3 class="text-xs uppercase tracking-wide text-ink-muted mb-2">
+              Enemy block #{{ selectedEnemyBlockIdx }}
+            </h3>
+            <dl class="grid grid-cols-2 gap-x-4 gap-y-0.5 mb-2">
+              <dt class="text-ink-muted">
+                ROM offset
+              </dt>
+              <dd class="font-mono">
+                0x{{ hex(selectedEnemyBlock.romOffset, 5) }}
+              </dd>
+              <dt class="text-ink-muted">
+                Size
+              </dt>
+              <dd class="font-mono">
+                {{ selectedEnemyStats.byteLength }}B
+              </dd>
+              <dt class="text-ink-muted">
+                Pages
+              </dt>
+              <dd>{{ selectedEnemyStats.pageCount }}</dd>
+              <dt class="text-ink-muted">
+                Enemies
+              </dt>
+              <dd>{{ selectedEnemyStats.totalEnemies }}</dd>
+              <dt class="text-ink-muted">
+                Shared with
+              </dt>
+              <dd class="text-xs font-mono">
+                {{ selectedEnemyBlock.referencingSlots.length === 1
+                  ? '(unshared)'
+                  : selectedEnemyBlock.referencingSlots
+                    .map(s => slotLabel(s))
+                    .join(', ') }}
+              </dd>
+            </dl>
+
+            <table
+              v-if="selectedEnemyStats.totalEnemies > 0"
+              class="w-full text-xs font-mono"
+            >
+              <thead class="text-ink-muted">
+                <tr>
+                  <th class="text-left py-1">
+                    Page
+                  </th>
+                  <th class="text-left py-1">
+                    ID
+                  </th>
+                  <th class="text-left py-1">
+                    X,Y
+                  </th>
+                  <th class="text-left py-1">
+                    Bytes
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <template
+                  v-for="(page, pIdx) in selectedEnemyBlock.pages"
+                  :key="pIdx"
+                >
+                  <tr
+                    v-for="(enemy, eIdx) in page.enemies"
+                    :key="`${pIdx}-${eIdx}`"
+                    class="border-t border-panel-border"
+                  >
+                    <td class="py-1 pr-2 text-ink-muted">
+                      {{ pIdx }}
+                    </td>
+                    <td class="py-1 pr-2">
+                      0x{{ hex(enemy.id) }}
+                    </td>
+                    <td class="py-1 pr-2">
+                      {{ enemy.x }},{{ enemy.y }}
+                    </td>
+                    <td class="py-1 pr-2">
+                      {{ bytesToHex(enemy.sourceBytes) }}
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <p
+              v-else
+              class="text-xs text-ink-muted italic"
+            >
+              (no enemies — empty block)
             </p>
           </section>
 

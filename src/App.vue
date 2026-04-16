@@ -16,6 +16,7 @@ import RomLoader from './components/RomLoader.vue';
 import LevelList from './components/LevelList.vue';
 import LevelCanvas from './components/LevelCanvas.vue';
 import PropertiesPanel from './components/PropertiesPanel.vue';
+import TileLibrary from './components/TileLibrary.vue';
 import BaseButton from './components/common/BaseButton.vue';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
 import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
@@ -115,8 +116,14 @@ function onDownload(): void {
         </div>
       </header>
 
-      <!-- Left: level list -->
-      <LevelList class="min-h-0 border-r border-panel-border" />
+      <!-- Left: level list (top 1/3) + tile library (bottom 2/3) -->
+      <div
+        class="min-h-0 border-r border-panel-border grid"
+        style="grid-template-rows: minmax(0, 1fr) minmax(0, 2fr);"
+      >
+        <LevelList class="min-h-0 overflow-hidden border-b border-panel-border" />
+        <TileLibrary class="min-h-0 overflow-hidden" />
+      </div>
 
       <!-- Center: level canvas -->
       <LevelCanvas class="min-h-0" />

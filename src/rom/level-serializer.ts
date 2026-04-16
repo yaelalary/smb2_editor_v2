@@ -88,18 +88,9 @@ export function packLevelHeader(header: LevelHeader): Uint8Array {
  *     same in-game result.
  */
 export function serializeLevelBlock(block: SerializableLevelBlock): Uint8Array {
-  // TODO: The constructive serializer (serializeConstructive) exists but
-  // produces incorrect cursor encoding, causing ROM corruption. Disabled
-  // until the encoding logic is fixed and a full re-pack of the level
-  // data region is implemented (so growing blocks don't overwrite
-  // adjacent data).
-  //
-  // For now: ALWAYS use conservative mode. This means:
-  //   - Property edits (header changes) → constructive HEADER only (works)
-  //   - Item adds/deletes/moves → visual only (undo/redo works), but
-  //     the downloaded ROM reflects the ORIGINAL items, not the edits.
-  //
-  // The user gets a warning in buildRom if edits would be lost.
+  if (block.isEdited) {
+    return serializeConstructive(block);
+  }
   return serializeConservative(block);
 }
 
@@ -142,22 +133,46 @@ function serializeConservative(block: SerializableLevelBlock): Uint8Array {
  *      backToStart (0xF4) and skipper (0xF2/0xF3) meta items as needed.
  *   4. Intersperse preserved meta items at the start of each page.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for future use, disabled until cursor encoding is fixed
+/**
+ * Re-encode items from their absolute tileX/tileY positions. Used for
+ * edited blocks (items added, deleted, or moved).
+ *
+ * Strategy (simple and deterministic):
+ *   - Meta items (groundSet, groundType, pointer) are emitted first,
+ *     preserving their original sourceBytes.
+ *   - Visible items are sorted by page → Y → X.
+ *   - For each page transition: emit backToStart (0xF4) + skippers
+ *     (0xF2/0xF3) to reach the target page. This resets cursorY to 0.
+ *   - For Y advancement within a page: iy = targetY - cursorY (always
+ *     0..14 after a page reset, so no unwanted Y-wrap occurs).
+ *   - Position byte = (iy << 4) | localX.
+ *
+ * This encoding may use more bytes than the original (extra meta items
+ * for page jumps), but is always correct. The budget check in buildRom
+ * ensures the total fits.
+ */
 function serializeConstructive(block: SerializableLevelBlock): Uint8Array {
   const headerBytes = packLevelHeader(block.header);
 
-  // Separate visible items from meta items.
   const visible: LevelItem[] = [];
   const meta: LevelItem[] = [];
   for (const item of block.items) {
-    if (item.tileX >= 0 && item.tileY >= 0) {
+    if (
+      (item.kind === 'regular' || item.kind === 'entrance') &&
+      item.tileX >= 0 &&
+      item.tileY >= 0
+    ) {
       visible.push(item);
-    } else {
+    } else if (
+      item.kind === 'groundSet' ||
+      item.kind === 'groundType' ||
+      item.kind === 'pointer'
+    ) {
       meta.push(item);
     }
+    // skipper / backToStart are regenerated — don't copy originals.
   }
 
-  // Sort visible items: by page, then Y, then local X.
   visible.sort((a, b) => {
     const pageA = Math.floor(a.tileX / 16);
     const pageB = Math.floor(b.tileX / 16);
@@ -166,104 +181,65 @@ function serializeConstructive(block: SerializableLevelBlock): Uint8Array {
     return (a.tileX % 16) - (b.tileX % 16);
   });
 
-  // Encode items into a byte buffer.
   const bytes: number[] = [];
 
-  // Emit meta items at the start (groundSet, groundType, etc.)
+  // Emit meta items at the start.
   for (const m of meta) {
     for (let i = 0; i < m.sourceBytes.byteLength; i++) {
       bytes.push(m.sourceBytes[i]!);
     }
   }
 
-  // Encode visible items with cursor tracking.
-  let cursorDeltaX = 0;
-  let cursorDeltaY = 0;
+  // Encode visible items with explicit page management.
+  let cursorPage = 0;
+  let cursorY = 0;
 
   for (const item of visible) {
     const targetPage = Math.floor(item.tileX / 16);
     const targetLocalX = item.tileX % 16;
     const targetY = item.tileY;
-    const currentPage = Math.floor(cursorDeltaX / 16);
 
-    // Need to jump to a different page or Y is before cursor?
-    if (targetPage < currentPage || targetY < cursorDeltaY) {
-      // Emit backToStart.
-      bytes.push(0xf4);
-      cursorDeltaX = 0;
-      cursorDeltaY = 0;
-    }
+    // Page transition or Y-rewind needed?
+    if (targetPage !== cursorPage || targetY < cursorY) {
+      bytes.push(0xf4); // backToStart → resets cursor to page 0, Y 0
+      cursorPage = 0;
+      cursorY = 0;
 
-    // Emit skippers to reach the target page.
-    const neededPage = Math.floor(item.tileX / 16);
-    const curPage = Math.floor(cursorDeltaX / 16);
-    let pagesToSkip = neededPage - curPage;
-    while (pagesToSkip >= 2) {
-      bytes.push(0xf3); // skip 2 pages
-      cursorDeltaX += 0x20;
-      pagesToSkip -= 2;
-    }
-    while (pagesToSkip >= 1) {
-      bytes.push(0xf2); // skip 1 page
-      cursorDeltaX += 0x10;
-      pagesToSkip -= 1;
-    }
-
-    // Compute Y delta.
-    let iy = targetY - cursorDeltaY;
-    if (iy < 0) {
-      // Y is before current cursor — shouldn't happen after sort + backToStart.
-      // Defensive: emit backToStart and re-approach.
-      bytes.push(0xf4);
-      cursorDeltaX = 0;
-      cursorDeltaY = 0;
-      // Re-emit skippers.
-      let pg = Math.floor(item.tileX / 16);
-      while (pg >= 2) {
+      // Skip to target page.
+      let toSkip = targetPage;
+      while (toSkip >= 2) {
         bytes.push(0xf3);
-        cursorDeltaX += 0x20;
-        pg -= 2;
+        cursorPage += 2;
+        toSkip -= 2;
       }
-      while (pg >= 1) {
+      if (toSkip >= 1) {
         bytes.push(0xf2);
-        cursorDeltaX += 0x10;
-        pg -= 1;
+        cursorPage += 1;
       }
-      iy = targetY;
     }
 
-    // Handle iy >= 15 (would cause unwanted page wrap).
-    // If iy >= 15, the cursor wraps to next page.
-    // We handle by keeping iy < 15 and emitting multiple items? No.
-    // Actually we CAN let the wrap happen if targetPage matches.
-    // For safety, clamp iy to 0-14 range.
-    if (iy > 14) iy = 14;
+    // Y delta — always >= 0 and < 15 after a page reset.
+    const iy = targetY - cursorY;
 
-    const ix = targetLocalX;
-    const positionByte = ((iy & 0x0f) << 4) | (ix & 0x0f);
-
-    // Emit position byte + item ID (for regular items, 2 bytes).
+    const positionByte = ((iy & 0x0f) << 4) | (targetLocalX & 0x0f);
     bytes.push(positionByte);
-    if (item.kind === 'regular' || item.kind === 'entrance') {
-      bytes.push(item.itemId & 0xff);
-      // For entrance items with parameters (4 or 5 bytes), emit the
-      // extra bytes from sourceBytes if they exist.
-      if (item.sourceBytes.byteLength > 2) {
-        for (let i = 2; i < item.sourceBytes.byteLength; i++) {
-          bytes.push(item.sourceBytes[i]!);
-        }
+    bytes.push(item.itemId & 0xff);
+
+    // Entrance items may have extra parameter bytes (4 or 5 byte total).
+    if (item.kind === 'entrance' && item.sourceBytes.byteLength > 2) {
+      for (let i = 2; i < item.sourceBytes.byteLength; i++) {
+        bytes.push(item.sourceBytes[i]!);
       }
     }
 
-    // Update cursor.
-    cursorDeltaY += iy;
-    if (cursorDeltaY >= 0x0f) {
-      cursorDeltaY = (cursorDeltaY + 1) % 16;
-      cursorDeltaX += 0x10;
+    // Update cursor Y.
+    cursorY += iy;
+    if (cursorY >= 15) {
+      cursorY = (cursorY + 1) % 16;
+      cursorPage += 1;
     }
   }
 
-  // Build the final buffer: header + items + terminator.
   const totalLen = LEVEL_HEADER_BYTES + bytes.length + 1;
   const out = new Uint8Array(totalLen);
   out.set(headerBytes, 0);

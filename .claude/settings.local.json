@@ -28,7 +28,9 @@
       "Bash(kill %1)",
       "Bash(wait)",
       "Bash(npx vitest *)",
-      "Bash(npx eslint *)"
+      "Bash(npx eslint *)",
+      "Bash(npx tsc *)",
+      "Bash(ls /c/Users/Yael/Documents/Dev/Web/smb2/smb2res/rc/*.bmp)"
     ]
   }
 }

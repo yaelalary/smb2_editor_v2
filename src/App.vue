@@ -18,6 +18,7 @@ import LevelCanvas from './components/LevelCanvas.vue';
 import PropertiesPanel from './components/PropertiesPanel.vue';
 import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
+import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
 import BaseButton from './components/common/BaseButton.vue';
 import { useEditorStore } from '@/stores/editor';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
@@ -167,8 +168,11 @@ function onDownload(): void {
         />
       </div>
 
-      <!-- Center: level canvas -->
-      <LevelCanvas class="min-h-0" />
+      <!-- Center: shared enemy banner + level canvas -->
+      <div class="min-h-0 flex flex-col">
+        <SharedEnemyBanner />
+        <LevelCanvas class="flex-1 min-h-0" />
+      </div>
 
       <!-- Right: properties panel -->
       <PropertiesPanel class="min-h-0 border-l border-panel-border" />

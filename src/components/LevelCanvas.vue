@@ -18,7 +18,7 @@ import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ITEM_DIM, getItemDimTiles, ENEMY_DIM } from '@/rom/nesleveldef';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand } from '@/commands/tile-commands';
-import { PlaceEnemyCommand } from '@/commands/enemy-commands';
+import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
 import {
   getAtlasImage,
   metatileRect,
@@ -61,11 +61,27 @@ function tileFromEvent(e: MouseEvent): { x: number; y: number } | null {
   return { x, y };
 }
 
-function hitTest(tileX: number, tileY: number): LevelItem | null {
+function hitTestTile(tileX: number, tileY: number): LevelItem | null {
   const b = block.value;
   if (!b) return null;
   for (const item of b.items) {
     if (item.tileX === tileX && item.tileY === tileY) return item;
+  }
+  return null;
+}
+
+function hitTestEnemy(tileX: number, tileY: number): { enemy: EnemyItem; pageIndex: number } | null {
+  const eb = getEnemyBlock();
+  if (!eb) return null;
+  for (let pageIdx = 0; pageIdx < eb.pages.length; pageIdx++) {
+    const page = eb.pages[pageIdx]!;
+    for (const enemy of page.enemies) {
+      const ex = pageIdx * 16 + enemy.x;
+      const ey = enemy.y;
+      if (ex === tileX && ey === tileY) {
+        return { enemy, pageIndex: pageIdx };
+      }
+    }
   }
   return null;
 }
@@ -150,10 +166,33 @@ function onMouseUp(e: MouseEvent): void {
     return;
   }
 
-  // If dragging a selected item to a new position:
+  const moved = upPos.x !== mouseDownPos.x || upPos.y !== mouseDownPos.y;
+
+  if (editor.activeTool === 'enemies') {
+    // Enemy mode: interact with enemies.
+    if (
+      selectedEnemy.value &&
+      moved &&
+      (selectedEnemy.value.enemy.x + selectedEnemy.value.pageIndex * 16) === mouseDownPos.x &&
+      selectedEnemy.value.enemy.y === mouseDownPos.y
+    ) {
+      // TODO: MoveEnemyCommand (cross-page move is complex, skip for now)
+      mouseDownPos = null;
+      return;
+    }
+    // Click to select/deselect enemy.
+    const hitE = hitTestEnemy(upPos.x, upPos.y);
+    selectedEnemy.value = hitE;
+    selectedItem.value = null;
+    mouseDownPos = null;
+    redraw();
+    return;
+  }
+
+  // Tile mode: interact with tiles.
   if (
     selectedItem.value &&
-    (upPos.x !== mouseDownPos.x || upPos.y !== mouseDownPos.y) &&
+    moved &&
     selectedItem.value.tileX === mouseDownPos.x &&
     selectedItem.value.tileY === mouseDownPos.y
   ) {
@@ -168,9 +207,9 @@ function onMouseUp(e: MouseEvent): void {
     return;
   }
 
-  // Otherwise: click to select/deselect.
-  const hit = hitTest(upPos.x, upPos.y);
+  const hit = hitTestTile(upPos.x, upPos.y);
   selectedItem.value = hit;
+  selectedEnemy.value = null;
   mouseDownPos = null;
   redraw();
 }
@@ -179,13 +218,29 @@ function onMouseUp(e: MouseEvent): void {
 
 function onKeyDown(e: KeyboardEvent): void {
   if (e.key === 'Delete' || e.key === 'Backspace') {
+    e.preventDefault();
+
+    // Delete selected enemy?
+    if (selectedEnemy.value) {
+      const eb = getEnemyBlock();
+      if (eb) {
+        history.execute(
+          new DeleteEnemyCommand(eb, selectedEnemy.value.pageIndex, selectedEnemy.value.enemy, rom.activeSlot),
+        );
+        selectedEnemy.value = null;
+        redraw();
+      }
+      return;
+    }
+
+    // Delete selected tile item?
     const item = selectedItem.value;
     const b = block.value;
-    if (!item || !b) return;
-    e.preventDefault();
-    history.execute(new DeleteItemCommand(b, item, rom.activeSlot));
-    selectedItem.value = null;
-    redraw();
+    if (item && b) {
+      history.execute(new DeleteItemCommand(b, item, rom.activeSlot));
+      selectedItem.value = null;
+      redraw();
+    }
   }
 }
 

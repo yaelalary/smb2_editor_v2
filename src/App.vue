@@ -48,7 +48,12 @@ function onDownload(): void {
   // clone original → overlay serialized level blocks → overlay enemy blocks.
   // For v0.1 (conservative mode) this produces byte-identical output.
   // Phase 2+ with constructive serialization produces the edited ROM.
-  const outputRom = buildRom(data.rom, levels, enemies);
+  // Cast to strip Pinia's DeepReadonly — buildRom only reads, never mutates.
+  const outputRom = buildRom(
+    data.rom,
+    levels as unknown as import('@/rom/model').LevelMap,
+    enemies as unknown as import('@/rom/model').EnemyMap,
+  );
   downloadRom(outputRom, 'smb2.nes');
 }
 </script>

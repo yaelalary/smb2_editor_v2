@@ -22,37 +22,45 @@
  * be added when editing ships.
  */
 
-import type { LevelMap, EnemyMap } from './model';
+import type { LevelMap, EnemyMap, LevelBlock, EnemyBlock } from './model';
 import { serializeLevelBlock } from './level-serializer';
 import { serializeEnemyBlock } from './enemy-serializer';
+
+/** Accept Pinia's DeepReadonly-wrapped maps too. */
+interface ReadonlyLevelMap {
+  readonly blocks: ReadonlyArray<Pick<LevelBlock, 'romOffset' | 'header' | 'items' | 'byteLength' | 'sourceRange' | 'isEdited'>>;
+}
+
+interface ReadonlyEnemyMap {
+  readonly blocks: ReadonlyArray<Pick<EnemyBlock, 'romOffset' | 'pages' | 'byteLength' | 'sourceRange'>>;
+}
 
 /**
  * Build a complete .nes ROM from the parsed model by cloning the
  * original and overlaying serialized level + enemy blocks.
- *
- * @param originalRom - The full .nes file as originally uploaded.
- * @param levelMap    - Parsed level map (from `parseLevelMap`).
- * @param enemyMap    - Parsed enemy map (from `parseEnemyMap`).
- * @returns A fresh Uint8Array of the same length as `originalRom`.
  */
 export function buildRom(
   originalRom: Uint8Array,
-  levelMap: LevelMap,
-  enemyMap: EnemyMap,
+  levelMap: LevelMap | ReadonlyLevelMap,
+  enemyMap: EnemyMap | ReadonlyEnemyMap,
 ): Uint8Array {
   // 1. Clone.
   const output = new Uint8Array(originalRom.byteLength);
   output.set(originalRom);
 
   // 2. Overlay level blocks.
+  //    WARNING: constructive item serialization is disabled (see
+  //    level-serializer.ts). Blocks with isEdited=true will still use
+  //    conservative mode — item edits (add/delete/move) are NOT
+  //    reflected in the output. Only header edits are persisted.
   for (const block of levelMap.blocks) {
-    const serialized = serializeLevelBlock(block);
+    const serialized = serializeLevelBlock(block as any); // eslint-disable-line @typescript-eslint/no-explicit-any -- readonly compat
     output.set(serialized, block.sourceRange[0]);
   }
 
   // 3. Overlay enemy blocks.
   for (const block of enemyMap.blocks) {
-    const serialized = serializeEnemyBlock(block);
+    const serialized = serializeEnemyBlock(block as any); // eslint-disable-line @typescript-eslint/no-explicit-any -- readonly compat
     output.set(serialized, block.sourceRange[0]);
   }
 

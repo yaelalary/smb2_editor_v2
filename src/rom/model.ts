@@ -42,6 +42,22 @@ export interface LevelItem {
   readonly sourceBytes: Uint8Array;
   /** ROM-absolute byte range this item occupies. */
   readonly sourceRange: ByteRange;
+  /**
+   * Absolute tile coordinates, populated during parse by
+   * `computeItemPositions`. Only meaningful for `regular` and
+   * `entrance` items (meta items like skipper/backToStart don't have
+   * a visible position). -1 means "no position" (meta item).
+   *
+   * Phase 2+ editing modifies these; the constructive serializer
+   * re-encodes the byte stream from them.
+   */
+  tileX: number;
+  tileY: number;
+  /**
+   * The raw item ID byte (byte[1] for regular/entrance, -1 for meta
+   * items). Stored separately from sourceBytes for editing convenience.
+   */
+  itemId: number;
 }
 
 /**
@@ -80,13 +96,19 @@ export interface LevelBlock {
   /** ROM-absolute offset where this block begins. */
   readonly romOffset: number;
   readonly header: LevelHeader;
-  readonly items: ReadonlyArray<LevelItem>;
+  readonly items: LevelItem[];
   /** Total byte length including header (4), items, and terminator (1). */
-  readonly byteLength: number;
+  byteLength: number;
   /** ROM-absolute byte range of the whole block. */
   readonly sourceRange: ByteRange;
   /** Slot IDs that reference this block (≥ 1; canonical ROM has shared blocks). */
   readonly referencingSlots: ReadonlyArray<LevelSlotId>;
+  /**
+   * Set to true when any item or the header has been modified by a
+   * command. The serializer uses this to decide between conservative
+   * (original bytes) and constructive (re-encode from model) modes.
+   */
+  isEdited: boolean;
 }
 
 /**

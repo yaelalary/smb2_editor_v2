@@ -205,6 +205,46 @@ function sizeOfItem(rom: Uint8Array, romOffset: number): ItemSizing {
 }
 
 /**
+ * Walk items and assign `tileX`, `tileY` using the cumulative cursor.
+ * Same logic as `computeItemPositions` in `level-layout.ts` but writes
+ * directly onto the parsed items rather than producing a separate array.
+ */
+function populateAbsolutePositions(items: LevelItem[]): void {
+  let deltaX = 0;
+  let deltaY = 0;
+
+  for (const item of items) {
+    switch (item.kind) {
+      case 'skipper': {
+        const lowNibble = item.sourceBytes[0]! & 0x0f;
+        deltaX += (lowNibble - 1) * 0x10;
+        break;
+      }
+      case 'backToStart':
+        deltaX = 0;
+        deltaY = 0;
+        break;
+      case 'regular':
+      case 'entrance': {
+        const byte0 = item.sourceBytes[0]!;
+        const iy = (byte0 >> 4) & 0x0f;
+        const ix = byte0 & 0x0f;
+        deltaY += iy;
+        if (deltaY >= 0x0f) {
+          deltaY = (deltaY + 1) % 16;
+          deltaX += 0x10;
+        }
+        item.tileX = deltaX + ix;
+        item.tileY = deltaY;
+        break;
+      }
+      default:
+        break;
+    }
+  }
+}
+
+/**
  * Parse a single physical level block starting at `romOffset`.
  * Walks items until the 0xFF terminator; throws if the region ends
  * or the data region is exceeded before a terminator is found.
@@ -239,6 +279,9 @@ export function parseLevelBlock(
     if (byte === LEVEL_TERMINATOR) {
       const end = cursor + 1;
       const sourceRange: ByteRange = [romOffset, end];
+      // Populate absolute tile positions from the cumulative cursor.
+      populateAbsolutePositions(items);
+
       return {
         romOffset,
         header,
@@ -246,6 +289,7 @@ export function parseLevelBlock(
         byteLength: end - romOffset,
         sourceRange,
         referencingSlots,
+        isEdited: false,
       };
     }
 
@@ -257,10 +301,14 @@ export function parseLevelBlock(
         cursor,
       );
     }
+    const itemBytes = rom.slice(cursor, itemEnd);
     items.push({
       kind,
-      sourceBytes: rom.slice(cursor, itemEnd),
+      sourceBytes: itemBytes,
       sourceRange: [cursor, itemEnd],
+      tileX: -1,
+      tileY: -1,
+      itemId: itemBytes.byteLength > 1 ? itemBytes[1]! : -1,
     });
     cursor = itemEnd;
   }

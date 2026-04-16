@@ -22,6 +22,7 @@ import { parseLevelMap } from '@/rom/level-parser';
 import { serializeLevelBlock } from '@/rom/level-serializer';
 import { parseEnemyMap } from '@/rom/enemy-parser';
 import { serializeEnemyBlock } from '@/rom/enemy-serializer';
+import { buildRom } from '@/rom/rom-builder';
 
 const FIXTURE_PATH = path.resolve(__dirname, '../fixtures/smb2.nes');
 
@@ -139,6 +140,33 @@ describe.skipIf(!hasFixture())('Level round-trip (conservative mode)', () => {
       );
     }
     expect(diffs).toHaveLength(0);
+  });
+
+  it('buildRom produces a byte-identical full ROM (clone-and-overlay pipeline)', () => {
+    const rom = loadRom();
+    const levels = parseLevelMap(rom);
+    const enemies = parseEnemyMap(rom);
+
+    const output = buildRom(rom, levels, enemies);
+
+    expect(output.byteLength).toBe(rom.byteLength);
+
+    // Byte-by-byte comparison — find the first diverging offset if any.
+    let firstDiff = -1;
+    for (let i = 0; i < rom.byteLength; i++) {
+      if (output[i] !== rom[i]) {
+        firstDiff = i;
+        break;
+      }
+    }
+    if (firstDiff !== -1) {
+      throw new Error(
+        `buildRom output differs from original at byte 0x${firstDiff.toString(16)} ` +
+          `(expected 0x${(rom[firstDiff] ?? 0).toString(16)}, ` +
+          `got 0x${(output[firstDiff] ?? 0).toString(16)})`,
+      );
+    }
+    expect(firstDiff).toBe(-1);
   });
 
   it('keeps every enemy block inside the shared level-data region', () => {

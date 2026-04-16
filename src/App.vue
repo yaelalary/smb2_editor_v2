@@ -15,9 +15,12 @@ import { computed } from 'vue';
 import RomLoader from './components/RomLoader.vue';
 import LevelList from './components/LevelList.vue';
 import LevelCanvas from './components/LevelCanvas.vue';
+import BaseButton from './components/common/BaseButton.vue';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
 import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
 import { useRomStore } from '@/stores/rom';
+import { downloadRom } from '@/persistence/rom-download';
+import { buildRom } from '@/rom/rom-builder';
 import type { ValidationSuccess } from '@/rom/validation';
 
 const rom = useRomStore();
@@ -29,6 +32,20 @@ const devMode = computed(() => {
 
 function onLoaded(validation: ValidationSuccess): void {
   rom.loadRom(validation);
+}
+
+function onDownload(): void {
+  const data = rom.romData;
+  const levels = rom.levelMap;
+  const enemies = rom.enemyMap;
+  if (!data || !levels || !enemies) return;
+
+  // Build the output ROM through the full serialize pipeline:
+  // clone original → overlay serialized level blocks → overlay enemy blocks.
+  // For v0.1 (conservative mode) this produces byte-identical output.
+  // Phase 2+ with constructive serialization produces the edited ROM.
+  const outputRom = buildRom(data.rom, levels, enemies);
+  downloadRom(outputRom, 'smb2.nes');
 }
 </script>
 
@@ -78,12 +95,21 @@ function onLoaded(validation: ValidationSuccess): void {
             {{ rom.activeSlotLabel }} — block #{{ rom.levelMap?.slotToBlock[rom.activeSlot] }}
           </span>
         </div>
-        <button
-          class="text-xs text-ink-muted hover:text-ink underline"
-          @click="rom.unload()"
-        >
-          Load a different ROM
-        </button>
+        <div class="flex items-center gap-3">
+          <BaseButton
+            variant="primary"
+            size="sm"
+            @click="onDownload"
+          >
+            Download ROM
+          </BaseButton>
+          <button
+            class="text-xs text-ink-muted hover:text-ink underline"
+            @click="rom.unload()"
+          >
+            Load a different ROM
+          </button>
+        </div>
       </header>
 
       <!-- Left: level list -->

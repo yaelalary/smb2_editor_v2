@@ -14,6 +14,7 @@ import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
 import { levelDimensions, ITEM_COLORS, getFxForSlot } from '@/rom/level-layout';
 import { GROUND_SET_H, GROUND_SET_V, GROUND_TYPE_H, GROUND_TYPE_V } from '@/rom/nesleveldef';
+import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ITEM_DIM, getItemDimTiles, ENEMY_DIM } from '@/rom/nesleveldef';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
@@ -349,10 +350,8 @@ function drawGround(
         if (tx >= widthTiles || ty >= heightTiles) continue;
 
         const { sx, sy } = metatileRect(groundTileId);
-        ctx.globalAlpha = 0.35;
         ctx.drawImage(atlas, sx, sy, METATILE_SIZE, METATILE_SIZE,
           tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX);
-        ctx.globalAlpha = 1;
       }
     }
   }
@@ -434,12 +433,17 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   canvas.style.height = `${cssH}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Background.
-  ctx.fillStyle = '#1a1a2e';
+  // Background color from the level's NES palette (palette 0, color 0).
+  // Read dynamically from the ROM — no hardcoding.
+  const romData = rom.romData;
+  const palette = romData
+    ? readLevelPalette(romData.rom, rom.activeSlot, b.header.palette)
+    : null;
+  ctx.fillStyle = palette?.bgColorCss ?? '#1a1a2e';
   ctx.fillRect(0, 0, cssW, cssH);
 
-  // Grid.
-  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  // Grid (subtle, works on both light and dark backgrounds).
+  ctx.strokeStyle = 'rgba(0,0,0,0.08)';
   ctx.lineWidth = 0.5;
   for (let x = 0; x <= widthTiles; x++) {
     ctx.beginPath();
@@ -455,7 +459,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   }
 
   // Page separators.
-  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
   ctx.lineWidth = 1;
   if (b.header.direction === 1) {
     for (let p = 1; p <= b.header.length; p++) {
@@ -527,9 +531,9 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   }
 
   // Info overlay.
-  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(0, 0, 220, 28);
-  ctx.fillStyle = '#ccc';
+  ctx.fillStyle = '#fff';
   ctx.font = '11px system-ui, sans-serif';
   ctx.fillText(
     `${widthTiles}×${heightTiles} tiles · ${b.items.filter(i => i.tileX >= 0).length} items · ${b.header.direction === 1 ? 'horiz' : 'vert'}`,

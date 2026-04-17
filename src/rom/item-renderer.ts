@@ -22,14 +22,7 @@ import {
   GROUND_TYPE_H,
   GROUND_TYPE_V,
 } from './nesleveldef';
-import {
-  getSingDim,
-  getHorzDim,
-  getVertDim,
-  getEntrDim,
-  getBgSet,
-  emptyDim,
-} from './tile-reader';
+import { getBgSet, emptyDim } from './tile-reader';
 import { getFxForSlot } from './level-layout';
 
 // ─── Public types ──────────────────────────────────────────────────
@@ -79,22 +72,22 @@ function pushTile(
 // ─── Draw functions ────────────────────────────────────────────────
 
 function renderSingle(
-  rom: Uint8Array, itemId: number, world: number,
+  _rom: Uint8Array, itemId: number, _world: number,
   x: number, y: number, atlas: number,
 ): RenderedTile[] {
-  const dim = getSingDim(rom, itemId, world, fallbackDim(itemId));
+  const dim = fallbackDim(itemId);
   const out: RenderedTile[] = [];
   pushTile(out, dim.topleft, x, y, atlas);
   return out;
 }
 
 function renderHorizontal(
-  rom: Uint8Array, rawId: number, world: number,
+  _rom: Uint8Array, rawId: number, _world: number,
   x: number, y: number, atlas: number,
 ): RenderedTile[] {
   const id = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
   const size = (rawId - 0x30) & 0x0f;
-  const dim = getHorzDim(rom, id, world, fallbackDim(id));
+  const dim = fallbackDim(id);
   const out: RenderedTile[] = [];
   pushTile(out, dim.topleft, x, y, atlas);
   pushTile(out, dim.topright, x + size, y, atlas);
@@ -105,7 +98,7 @@ function renderHorizontal(
 }
 
 function renderVertical(
-  rom: Uint8Array, rawId: number, world: number,
+  _rom: Uint8Array, rawId: number, _world: number,
   posX: number, posY: number,
   isInverted: boolean, isHorizontalLevel: boolean, atlas: number,
 ): RenderedTile[] {
@@ -120,7 +113,7 @@ function renderVertical(
     size = 0x0f * Math.floor((posY + 0x0f) / 0x0f) - posY - 1;
   }
 
-  const dim = getVertDim(rom, id, world, fallbackDim(id));
+  const dim = fallbackDim(id);
   const out: RenderedTile[] = [];
 
   if (!isInverted) {
@@ -233,14 +226,14 @@ function renderVertGround(
 }
 
 function renderSpecialRegular(
-  rom: Uint8Array, rawId: number, world: number,
+  _rom: Uint8Array, rawId: number, _world: number,
   posX: number, posY: number, atlas: number,
 ): RenderedTile[] {
   const out: RenderedTile[] = [];
   switch (rawId) {
     case 14: pushTile(out, 0xfe, posX, posY, atlas); break;
     case 16: {
-      const dim = getSingDim(rom, rawId, world, fallbackDim(rawId));
+      const dim = fallbackDim(rawId);
       pushTile(out, dim.topleft, posX, posY, atlas);
       pushTile(out, dim.topright, posX + 1, posY, atlas);
       break;
@@ -254,36 +247,30 @@ function renderSpecialRegular(
 }
 
 function renderEntrance(
-  rom: Uint8Array, rawId: number, world: number,
+  _rom: Uint8Array, rawId: number, _world: number,
   posX: number, posY: number, atlas: number,
 ): RenderedTile[] {
-  const fb = fallbackDim(rawId);
+  const dim = fallbackDim(rawId);
   const out: RenderedTile[] = [];
   switch (rawId) {
-    case 9: case 10: case 11: case 28: case 29: {
-      const dim = getEntrDim(rom, rawId, world, fb);
+    case 9: case 10: case 11: case 28: case 29:
       pushTile(out, dim.topleft, posX, posY, atlas);
       pushTile(out, dim.bottomleft, posX, posY + 1, atlas);
       break;
-    }
-    case 19: {
-      const dim = getEntrDim(rom, rawId, world, fb);
+    case 19:
       pushTile(out, dim.topleft, posX, posY, atlas);
       pushTile(out, dim.bottomleft, posX, posY + 1, atlas);
       pushTile(out, dim.top, posX + 1, posY, atlas);
       pushTile(out, dim.middle, posX + 1, posY + 1, atlas);
       pushTile(out, dim.bottomright, posX + 2, posY + 1, atlas);
       break;
-    }
-    case 20: {
-      const dim = getEntrDim(rom, rawId, world, fb);
+    case 20:
       pushTile(out, dim.bottomleft, posX - 2, posY + 1, atlas);
       pushTile(out, dim.top, posX - 1, posY, atlas);
       pushTile(out, dim.middle, posX - 1, posY + 1, atlas);
       pushTile(out, dim.topright, posX, posY, atlas);
       pushTile(out, dim.bottomright, posX, posY + 1, atlas);
       break;
-    }
     case 21: case 30:
       pushTile(out, 0xfc, posX, posY, atlas);
       break;

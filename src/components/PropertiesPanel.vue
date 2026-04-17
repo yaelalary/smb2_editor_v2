@@ -11,6 +11,7 @@
  */
 import { computed } from 'vue';
 import BasePanel from './common/BasePanel.vue';
+import PaletteEditor from './PaletteEditor.vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import {
@@ -113,6 +114,11 @@ const FIELDS: FieldDef[] = [
           class="w-16 px-2 py-1 text-xs font-mono text-right rounded border border-panel-border bg-panel focus:outline-accent"
           @change="(e) => setField(field.key, (e.target as HTMLInputElement).value)"
         >
+      </div>
+
+      <!-- Palette swatches + editor -->
+      <div class="pt-3 border-t border-panel-border">
+        <PaletteEditor />
       </div>
 
       <!-- Undo/Redo status line -->

@@ -4,10 +4,17 @@
  * Registers Ctrl+Z / Ctrl+Shift+Z (Cmd on macOS) for undo/redo.
  * Skips the shortcut when the active element is a text input (so the
  * browser's native undo/redo applies to text fields instead).
+ *
+ * When an undo/redo affects a level slot different from the currently
+ * viewed one, a transient toast shows the command label so the user
+ * isn't confused by invisible state changes.
  */
 
 import { onMounted, onUnmounted } from 'vue';
 import { useHistoryStore } from '@/stores/history';
+import { useRomStore } from '@/stores/rom';
+import { useToast } from '@/composables/useToast';
+import type { Command } from '@/commands/types';
 
 function isTextInput(el: Element | null): boolean {
   if (!el) return false;
@@ -19,6 +26,16 @@ function isTextInput(el: Element | null): boolean {
 
 export function useKeyboardShortcuts(): void {
   const history = useHistoryStore();
+  const rom = useRomStore();
+  const { show } = useToast();
+
+  /** Show a toast if the command targeted a different slot. */
+  function notifyIfOffScreen(cmd: Command | null, verb: string): void {
+    if (!cmd) return;
+    if (cmd.targetSlot !== undefined && cmd.targetSlot !== rom.activeSlot) {
+      show(`${verb}: ${cmd.label}`);
+    }
+  }
 
   function onKeyDown(e: KeyboardEvent): void {
     // Don't intercept when typing in a form field.
@@ -29,14 +46,16 @@ export function useKeyboardShortcuts(): void {
 
     if (e.key === 'z' && !e.shiftKey) {
       e.preventDefault();
-      history.undo();
+      const cmd = history.undo();
+      notifyIfOffScreen(cmd, 'Undone');
     } else if (
       (e.key === 'z' && e.shiftKey) ||
       (e.key === 'Z' && e.shiftKey) ||
       e.key === 'y'
     ) {
       e.preventDefault();
-      history.redo();
+      const cmd = history.redo();
+      notifyIfOffScreen(cmd, 'Redone');
     }
   }
 

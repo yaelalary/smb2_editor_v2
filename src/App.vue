@@ -20,6 +20,7 @@ import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
 import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
 import MemoryBudgetIndicator from './components/MemoryBudgetIndicator.vue';
+import ToastContainer from './components/ToastContainer.vue';
 import BaseButton from './components/common/BaseButton.vue';
 import { useEditorStore } from '@/stores/editor';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
@@ -184,4 +185,6 @@ function onDownload(): void {
       <PropertiesPanel class="min-h-0 border-l border-panel-border" />
     </div>
   </template>
+
+  <ToastContainer />
 </template>

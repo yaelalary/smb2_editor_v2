@@ -20,6 +20,7 @@ import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
 import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
 import MemoryBudgetIndicator from './components/MemoryBudgetIndicator.vue';
+import ConfirmationDialog from './components/ConfirmationDialog.vue';
 import ToastContainer from './components/ToastContainer.vue';
 import BaseButton from './components/common/BaseButton.vue';
 import { useEditorStore } from '@/stores/editor';
@@ -41,6 +42,27 @@ const { show: showToast } = useToast();
 useKeyboardShortcuts();
 
 const budgetRef = ref<InstanceType<typeof MemoryBudgetIndicator> | null>(null);
+const showUnloadConfirm = ref(false);
+
+function onUnloadClick(): void {
+  // If there are unsaved edits, confirm first.
+  if (history.canUndo) {
+    showUnloadConfirm.value = true;
+  } else {
+    rom.unload();
+    history.clear();
+  }
+}
+
+function confirmUnload(): void {
+  showUnloadConfirm.value = false;
+  rom.unload();
+  history.clear();
+}
+
+function cancelUnload(): void {
+  showUnloadConfirm.value = false;
+}
 
 const devMode = computed(() => {
   if (typeof window === 'undefined') return null;
@@ -189,7 +211,7 @@ function onDownload(): void {
           >
           <button
             class="text-xs text-ink-muted hover:text-ink underline"
-            @click="rom.unload()"
+            @click="onUnloadClick"
           >
             Load a different ROM
           </button>
@@ -249,6 +271,15 @@ function onDownload(): void {
       <PropertiesPanel class="min-h-0 border-l border-panel-border" />
     </div>
   </template>
+
+  <ConfirmationDialog
+    :open="showUnloadConfirm"
+    title="Load a different ROM?"
+    message="You have unsaved edits. Loading a new ROM will discard all your changes. Consider exporting your project first."
+    confirm-label="Discard and load new ROM"
+    @confirm="confirmUnload"
+    @cancel="cancelUnload"
+  />
 
   <ToastContainer />
 </template>

@@ -12,15 +12,13 @@ import { ENEMY_NAMES, ENEMY_DIM } from '@/rom/nesleveldef';
 import { ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
-import { readLevelPalette } from '@/rom/palette-reader';
+import { getFxForSlot } from '@/rom/level-layout';
 import {
+  getAtlasImage,
   metatileRect,
   preloadAllAtlases,
   METATILE_SIZE,
-  getColorizedAtlas,
 } from '@/assets/metatiles';
-
-const ENEMY_ATLAS = 8;
 const rom = useRomStore();
 const history = useHistoryStore();
 const atlasReady = ref(false);
@@ -35,14 +33,6 @@ watch(
   () => [rom.activeSlot, history.revision],
   () => { drawGeneration.value++; nextTick(() => { drawGeneration.value++; }); },
 );
-
-function getCurrentPalette() {
-  const romData = rom.romData;
-  if (!romData) return null;
-  const b = rom.activeBlock;
-  if (!b) return null;
-  return readLevelPalette(romData.rom, rom.activeSlot, (b as { header: { palette: number } }).header.palette);
-}
 
 interface EnemyCategory {
   label: string;
@@ -78,12 +68,13 @@ function onDragStart(e: DragEvent, enemyId: number): void {
 function drawEnemy(el: unknown, eid: number): void {
   if (!el) return;
   const canvas = el as HTMLCanvasElement;
-  const palette = getCurrentPalette();
-  const src = palette ? getColorizedAtlas(ENEMY_ATLAS, palette) : null;
+  // Enemies use the raw overworld atlas (0-2) — no palette colorization.
+  const atlasIdx = Math.min(getFxForSlot(rom.activeSlot), 2);
+  const src = getAtlasImage(atlasIdx);
 
   void drawGeneration.value;
 
-  const key = `${eid}:${palette?.nesIndices.join(',') ?? ''}`;
+  const key = `${eid}:${atlasIdx}`;
   if (canvas.dataset['drawn'] === key) return;
 
   canvas.width = METATILE_SIZE;

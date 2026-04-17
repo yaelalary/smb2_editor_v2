@@ -12,7 +12,7 @@ import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
-import { levelDimensions, ITEM_COLORS } from '@/rom/level-layout';
+import { levelDimensions, ITEM_COLORS, getFxForSlot } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
@@ -22,6 +22,7 @@ import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands
 import { renderItem, renderGround } from '@/rom/item-renderer';
 import type { RenderedTile } from '@/rom/item-renderer';
 import {
+  getAtlasImage,
   metatileRect,
   preloadAllAtlases,
   METATILE_SIZE,
@@ -30,7 +31,6 @@ import {
 import type { LevelPalette } from '@/rom/palette-reader';
 
 const TILE_PX = 16;
-const ENEMY_ATLAS_INDEX = 8;
 
 const rom = useRomStore();
 const history = useHistoryStore();
@@ -421,12 +421,17 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     drawItemOnCanvas(ctx, item, item === selectedItem.value, palette);
   }
 
-  // Enemy overlay (also palette-colorized).
+  // Enemy overlay — enemies use the overworld atlases (0-2) which contain
+  // pre-colored enemy sprites. In the C++ tool, Draw(eColor, ...) uses
+  // bmTpl[eColor] directly WITHOUT palette colorization. The overworld
+  // atlases have the actual enemy colors baked in.
+  // Atlas 0 = 5.bmp, atlas 1 = 6.bmp, atlas 2 = 7.bmp.
+  // We use fx capped to 0-2 since atlas 3 (9.bmp) is not a valid overworld atlas.
   if (editor.showEnemies) {
     const enemyBlock = getEnemyBlock();
-    const enemyAtlasSrc = palette
-      ? getColorizedAtlas(ENEMY_ATLAS_INDEX, palette)
-      : null;
+    const fx = getFxForSlot(rom.activeSlot);
+    const enemyAtlasIdx = Math.min(fx, 2); // overworld atlas 0-2
+    const enemyAtlasSrc = getAtlasImage(enemyAtlasIdx);
     if (enemyBlock && enemyAtlasSrc) {
       for (let pageIdx = 0; pageIdx < enemyBlock.pages.length; pageIdx++) {
         const page = enemyBlock.pages[pageIdx]!;

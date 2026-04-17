@@ -100,6 +100,96 @@ export class DeleteItemCommand implements Command {
   }
 }
 
+/**
+ * Delete multiple items at once — single undo restores all.
+ */
+export class DeleteItemsCommand implements Command {
+  readonly label: string;
+  readonly targetSlot?: number;
+
+  private readonly block: Mutable<LevelBlock>;
+  private readonly items: LevelItem[];
+  private removedEntries: { index: number; item: LevelItem }[] = [];
+
+  constructor(block: LevelBlock, items: LevelItem[], targetSlot?: number) {
+    this.block = block as Mutable<LevelBlock>;
+    this.items = items;
+    this.targetSlot = targetSlot;
+    this.label = `Delete ${items.length} items`;
+  }
+
+  execute(): void {
+    this.removedEntries = [];
+    // Remove in reverse index order to keep indices stable.
+    const indices = this.items
+      .map((item) => this.block.items.indexOf(item))
+      .filter((i) => i !== -1)
+      .sort((a, b) => b - a);
+    for (const idx of indices) {
+      const item = this.block.items[idx]!;
+      this.removedEntries.push({ index: idx, item });
+      this.block.items.splice(idx, 1);
+      this.block.byteLength -= item.sourceBytes.byteLength;
+    }
+    this.block.isEdited = true;
+  }
+
+  undo(): void {
+    // Re-insert in forward index order.
+    for (const entry of [...this.removedEntries].reverse()) {
+      this.block.items.splice(entry.index, 0, entry.item);
+      this.block.byteLength += entry.item.sourceBytes.byteLength;
+    }
+  }
+}
+
+/**
+ * Move multiple items by the same delta — single undo restores all.
+ */
+export class MoveItemsCommand implements Command {
+  readonly label: string;
+  readonly targetSlot?: number;
+
+  private readonly block: Mutable<LevelBlock>;
+  private readonly entries: { item: Mutable<LevelItem>; oldX: number; oldY: number }[];
+  private readonly dx: number;
+  private readonly dy: number;
+
+  constructor(
+    block: LevelBlock,
+    items: LevelItem[],
+    dx: number,
+    dy: number,
+    targetSlot?: number,
+  ) {
+    this.block = block as Mutable<LevelBlock>;
+    this.dx = dx;
+    this.dy = dy;
+    this.entries = items.map((item) => ({
+      item: item as Mutable<LevelItem>,
+      oldX: item.tileX,
+      oldY: item.tileY,
+    }));
+    this.targetSlot = targetSlot;
+    this.label = `Move ${items.length} items by (${dx}, ${dy})`;
+  }
+
+  execute(): void {
+    for (const e of this.entries) {
+      e.item.tileX = e.oldX + this.dx;
+      e.item.tileY = e.oldY + this.dy;
+    }
+    this.block.isEdited = true;
+  }
+
+  undo(): void {
+    for (const e of this.entries) {
+      e.item.tileX = e.oldX;
+      e.item.tileY = e.oldY;
+    }
+  }
+}
+
 export class MoveItemCommand implements Command {
   readonly label: string;
   readonly targetSlot?: number;

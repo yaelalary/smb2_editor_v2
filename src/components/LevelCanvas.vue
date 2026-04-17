@@ -17,7 +17,7 @@ import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
-import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand } from '@/commands/tile-commands';
+import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
 import { renderItem, renderGround } from '@/rom/item-renderer';
 import type { RenderedTile } from '@/rom/item-renderer';
@@ -36,11 +36,14 @@ const rom = useRomStore();
 const history = useHistoryStore();
 const editor = useEditorStore();
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-const selectedItem = ref<LevelItem | null>(null);
+const selectedItems = ref<LevelItem[]>([]);
 const selectedEnemy = ref<{ enemy: EnemyItem; pageIndex: number } | null>(null);
 
 // Ghost position for drop preview.
 const ghostTile = ref<{ x: number; y: number } | null>(null);
+
+// Rubber-band selection rectangle (tile coordinates).
+const rubberBand = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
 const block = computed<LevelBlock | null>(() => {
   void history.revision;
@@ -147,13 +150,39 @@ function onDrop(e: DragEvent): void {
   }
 }
 
-// ─── Click to select ────────────────────────────────────────────────
+// ─── Click, drag-to-move, and rubber-band multi-select ─────────────
 
 let mouseDownPos: { x: number; y: number } | null = null;
+let isDraggingSelection = false;
 
 function onMouseDown(e: MouseEvent): void {
-  if (e.button !== 0) return; // left button only
+  if (e.button !== 0) return;
   mouseDownPos = tileFromEvent(e);
+  isDraggingSelection = false;
+  rubberBand.value = null;
+}
+
+function onMouseMove(e: MouseEvent): void {
+  if (!mouseDownPos || e.buttons !== 1) return;
+  if (editor.activeTool !== 'tiles') return;
+
+  const pos = tileFromEvent(e);
+  if (!pos) return;
+
+  // If dragging from a selected item → will be a group move on mouseUp
+  if (selectedItems.value.some((it) => it.tileX === mouseDownPos!.x && it.tileY === mouseDownPos!.y)) {
+    return;
+  }
+
+  // Rubber-band: drag from empty space
+  isDraggingSelection = true;
+  rubberBand.value = {
+    x1: Math.min(mouseDownPos.x, pos.x),
+    y1: Math.min(mouseDownPos.y, pos.y),
+    x2: Math.max(mouseDownPos.x, pos.x),
+    y2: Math.max(mouseDownPos.y, pos.y),
+  };
+  redraw();
 }
 
 function onMouseUp(e: MouseEvent): void {
@@ -161,52 +190,88 @@ function onMouseUp(e: MouseEvent): void {
   const upPos = tileFromEvent(e);
   if (!upPos || !mouseDownPos) {
     mouseDownPos = null;
+    rubberBand.value = null;
     return;
   }
 
   const moved = upPos.x !== mouseDownPos.x || upPos.y !== mouseDownPos.y;
 
+  // ─── Enemy mode ────────────────────────────────────────────────
   if (editor.activeTool === 'enemies') {
-    // Enemy mode: interact with enemies.
-    if (
-      selectedEnemy.value &&
-      moved &&
-      (selectedEnemy.value.enemy.x + selectedEnemy.value.pageIndex * 16) === mouseDownPos.x &&
-      selectedEnemy.value.enemy.y === mouseDownPos.y
-    ) {
-      // TODO: MoveEnemyCommand (cross-page move is complex, skip for now)
-      mouseDownPos = null;
-      return;
-    }
-    // Click to select/deselect enemy.
     const hitE = hitTestEnemy(upPos.x, upPos.y);
     selectedEnemy.value = hitE;
-    selectedItem.value = null;
+    selectedItems.value = [];
     mouseDownPos = null;
     redraw();
     return;
   }
 
-  // Tile mode: interact with tiles.
+  // ─── Tile mode: rubber-band release → select items in rect ─────
+  if (isDraggingSelection && rubberBand.value) {
+    const rb = rubberBand.value;
+    const b = block.value;
+    if (b) {
+      const hits = b.items.filter(
+        (it) => it.tileX >= 0 && it.tileY >= 0 &&
+          it.tileX >= rb.x1 && it.tileX <= rb.x2 &&
+          it.tileY >= rb.y1 && it.tileY <= rb.y2,
+      );
+      selectedItems.value = hits;
+    }
+    selectedEnemy.value = null;
+    rubberBand.value = null;
+    isDraggingSelection = false;
+    mouseDownPos = null;
+    redraw();
+    return;
+  }
+
+  // ─── Tile mode: group move (drag selected items) ───────────────
   if (
-    selectedItem.value &&
+    selectedItems.value.length > 0 &&
     moved &&
-    selectedItem.value.tileX === mouseDownPos.x &&
-    selectedItem.value.tileY === mouseDownPos.y
+    selectedItems.value.some((it) => it.tileX === mouseDownPos!.x && it.tileY === mouseDownPos!.y)
   ) {
     const b = block.value;
     if (b) {
-      history.execute(
-        new MoveItemCommand(b, selectedItem.value, upPos.x, upPos.y, rom.activeSlot),
-      );
+      const dx = upPos.x - mouseDownPos.x;
+      const dy = upPos.y - mouseDownPos.y;
+      if (selectedItems.value.length === 1) {
+        history.execute(
+          new MoveItemCommand(b, selectedItems.value[0]!, upPos.x, upPos.y, rom.activeSlot),
+        );
+      } else {
+        history.execute(
+          new MoveItemsCommand(b, selectedItems.value, dx, dy, rom.activeSlot),
+        );
+      }
     }
     mouseDownPos = null;
     redraw();
     return;
   }
 
+  // ─── Tile mode: click to select/toggle ─────────────────────────
   const hit = hitTestTile(upPos.x, upPos.y);
-  selectedItem.value = hit;
+  if (e.shiftKey && hit) {
+    // Shift+click: add to selection
+    if (!selectedItems.value.includes(hit)) {
+      selectedItems.value = [...selectedItems.value, hit];
+    }
+  } else if (e.ctrlKey || e.metaKey) {
+    // Ctrl+click: toggle individual
+    if (hit) {
+      const idx = selectedItems.value.indexOf(hit);
+      if (idx !== -1) {
+        selectedItems.value = selectedItems.value.filter((_, i) => i !== idx);
+      } else {
+        selectedItems.value = [...selectedItems.value, hit];
+      }
+    }
+  } else {
+    // Plain click: single select
+    selectedItems.value = hit ? [hit] : [];
+  }
   selectedEnemy.value = null;
   mouseDownPos = null;
   redraw();
@@ -231,12 +296,16 @@ function onKeyDown(e: KeyboardEvent): void {
       return;
     }
 
-    // Delete selected tile item?
-    const item = selectedItem.value;
+    // Delete selected tile items (single or multi)?
+    const items = selectedItems.value;
     const b = block.value;
-    if (item && b) {
-      history.execute(new DeleteItemCommand(b, item, rom.activeSlot));
-      selectedItem.value = null;
+    if (items.length > 0 && b) {
+      if (items.length === 1) {
+        history.execute(new DeleteItemCommand(b, items[0]!, rom.activeSlot));
+      } else {
+        history.execute(new DeleteItemsCommand(b, items, rom.activeSlot));
+      }
+      selectedItems.value = [];
       redraw();
     }
   }
@@ -418,7 +487,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
 
   // Items — full multi-tile rendering ported from C++ Draw*ObjectEx.
   for (const item of b.items) {
-    drawItemOnCanvas(ctx, item, item === selectedItem.value, palette);
+    drawItemOnCanvas(ctx, item, selectedItems.value.includes(item), palette);
   }
 
   // Enemy overlay — enemies use the overworld atlases (0-2) which contain
@@ -470,6 +539,20 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     ctx.setLineDash([]);
   }
 
+  // Rubber-band selection rectangle.
+  const rb = rubberBand.value;
+  if (rb) {
+    ctx.fillStyle = 'rgba(255, 204, 0, 0.1)';
+    ctx.fillRect(rb.x1 * TILE_PX, rb.y1 * TILE_PX,
+      (rb.x2 - rb.x1 + 1) * TILE_PX, (rb.y2 - rb.y1 + 1) * TILE_PX);
+    ctx.strokeStyle = '#ffcc00';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 2]);
+    ctx.strokeRect(rb.x1 * TILE_PX + 0.5, rb.y1 * TILE_PX + 0.5,
+      (rb.x2 - rb.x1 + 1) * TILE_PX - 1, (rb.y2 - rb.y1 + 1) * TILE_PX - 1);
+    ctx.setLineDash([]);
+  }
+
   // Info overlay.
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(0, 0, 220, 28);
@@ -491,7 +574,7 @@ function redraw(): void {
 
 // Clear selection when switching levels.
 watch(() => rom.activeSlot, () => {
-  selectedItem.value = null;
+  selectedItems.value = [];
   redraw();
 });
 watch(() => history.revision, redraw);
@@ -520,6 +603,7 @@ onUnmounted(() => dprMedia.removeEventListener('change', redraw));
       @dragleave="onDragLeave"
       @drop="onDrop"
       @mousedown="onMouseDown"
+      @mousemove="onMouseMove"
       @mouseup="onMouseUp"
     />
     <p

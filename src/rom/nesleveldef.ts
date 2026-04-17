@@ -338,6 +338,13 @@ export const ITEM_NAMES: readonly string[] = [
 // g_mvGroundType[fx * 8 + groundType] gives the same for vertical levels.
 
 /** Decode DWORD to 4 ground tile IDs [gr0, gr1, gr2, gr3]. */
+/**
+ * Unpack a DWORD into 4 ground tile IDs (big-endian byte extraction).
+ * Combined with ROM-read bitmasks (getBgSet), BE ordering gives the
+ * correct grass-on-top / dirt-below result. The ROM bitmask assigns
+ * higher bitset values to upper rows (fill) and lower values to bottom
+ * rows (surface), so BE [gr0=MSB, ..., gr3=LSB] aligns correctly.
+ */
 function gd(dw: number): readonly [number, number, number, number] {
   return [
     (dw >>> 24) & 0xFF,

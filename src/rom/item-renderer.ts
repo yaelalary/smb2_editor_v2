@@ -16,16 +16,19 @@
 
 import type { LevelItem, LevelHeader } from './model';
 import type { NesItemDim } from './nesleveldef';
-import { ITEM_DIM } from './nesleveldef';
+import {
+  ITEM_DIM,
+  SITEM_DIM,
+  GROUND_TYPE_H,
+  GROUND_TYPE_V,
+} from './nesleveldef';
 import {
   getSingDim,
   getHorzDim,
   getVertDim,
   getMasvDim,
   getEntrDim,
-  getObjTile,
   getBgSet,
-  getBgTile,
   emptyDim,
 } from './tile-reader';
 import { getFxForSlot } from './level-layout';
@@ -166,13 +169,24 @@ function renderMassive(
   return out;
 }
 
+/**
+ * Get the tile ID for an extended item (vid 0-12) from the static
+ * SITEM_DIM table. Falls back to 0xFF if the entry doesn't exist.
+ */
+function extendedTileId(vid: number, fx: number, objectType: number): number {
+  const fxBlock = SITEM_DIM[fx];
+  const otBlock = fxBlock?.[objectType];
+  const dimEntry = otBlock?.[vid];
+  return dimEntry?.[0] ?? 0xff;
+}
+
 function renderHorzGround(
-  rom: Uint8Array, rawId: number, world: number, objectType: number,
+  rawId: number, fx: number, objectType: number,
   posX: number, posY: number, atlas: number,
 ): RenderedTile[] {
-  const id = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
+  const vid = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
   const size = (rawId - 0x30) & 0x0f;
-  const tileId = getObjTile(rom, id, world, objectType);
+  const tileId = extendedTileId(vid, fx, objectType);
   const out: RenderedTile[] = [];
   for (let i = 0; i <= size; i++) {
     pushTile(out, tileId, posX + i, posY, atlas);
@@ -181,26 +195,23 @@ function renderHorzGround(
 }
 
 function renderVertGround(
-  rom: Uint8Array, rawId: number, world: number, objectType: number,
+  rawId: number, fx: number, objectType: number,
   posX: number, posY: number, atlas: number,
 ): RenderedTile[] {
-  let id = rawId;
+  let vid: number;
   let size: number;
   if (rawId >= 0x30) {
     size = rawId & 0x0f;
-    id = Math.floor((rawId - 0x30) / 0x10);
+    vid = Math.floor((rawId - 0x30) / 0x10);
   } else {
+    vid = rawId;
     size = 0x0f * Math.floor((posY + 0x0f) / 0x0f) - posY;
   }
 
-  const tileId = getObjTile(rom, id, world, objectType);
+  const tileId = extendedTileId(vid, fx, objectType);
   const out: RenderedTile[] = [];
 
-  if (id === 0x06) {
-    pushTile(out, 0x9f, posX, posY, atlas);
-  } else {
-    pushTile(out, tileId, posX, posY, atlas);
-  }
+  pushTile(out, tileId, posX, posY, atlas);
   for (let i = 1; i <= size; i++) {
     pushTile(out, tileId, posX, posY + i, atlas);
   }
@@ -312,9 +323,9 @@ export function renderItem(
       const vid = Math.floor((rawId - 0x30) / 0x10);
       switch (vid) {
         case 0: case 1: case 2: case 3: case 4:
-          return renderHorzGround(rom, rawId, world, header.objectType, item.tileX, item.tileY, atlas);
+          return renderHorzGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas);
         case 5: case 6: case 7:
-          return renderVertGround(rom, rawId, world, header.objectType, item.tileX, item.tileY, atlas);
+          return renderVertGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas);
         case 10: case 11:
           return renderHorizontal(rom, rawId, world, item.tileX, item.tileY, atlas);
         case 8: case 9: case 12:
@@ -328,9 +339,11 @@ export function renderItem(
 // ─── Ground rendering ──────────────────────────────────────────────
 
 /**
- * Compute all ground tiles for a level. Reads tile IDs from ROM
- * per-world, matching the C++ DrawGroundEx. Ground uses atlas `fx`
- * (overworld atlases 0-3).
+ * Compute all ground tiles for a level using static tables.
+ * GROUND_SET_H/V provides the bitmask (which rows have ground).
+ * GROUND_TYPE_H/V provides the tile IDs per bitset variant.
+ * Empirically verified via ?dev=rendering: LE gd() + static tables
+ * give correct grass-on-top / dirt-below rendering.
  */
 export function renderGround(
   rom: Uint8Array,
@@ -343,18 +356,24 @@ export function renderGround(
   startX: number,
   startY: number,
 ): RenderedTile[] {
-  const world = Math.floor(slot / 30);
   const fx = getFxForSlot(slot);
   const isH = header.direction === 1;
   const out: RenderedTile[] = [];
-  // Ground uses the same atlas as items (both go through DrawGrGamma
-  // in C++, using bmGrGammaTpl from the same template).
   const groundAtlas = fx + 4;
 
-  const dwGroundSet = getBgSet(rom, groundSet & 0x1f, isH);
-  if ((groundSet & 0x1f) === 0x1f) return out;
+  const gSetIdx = groundSet & 0x1f;
+  if (gSetIdx === 0x1f) return out;
 
-  const bgType = groundType & 0x07;
+  // Bitmask from ROM (empirically correct), tile IDs from static tables
+  // (grid-compatible). The static GROUND_SET tables don't match the ROM
+  // for many levels, but getBgSet reads the correct per-level bitmask.
+  const dwGroundSet = getBgSet(rom, gSetIdx, isH);
+  if (dwGroundSet === 0) return out;
+
+  const gtTable = isH ? GROUND_TYPE_H : GROUND_TYPE_V;
+
+  const gtEntry = gtTable[fx]?.[groundType & 0x07];
+  if (!gtEntry) return out;
 
   if (isH) {
     for (let cx = startX; cx < canvasWidth; cx++) {
@@ -362,8 +381,8 @@ export function renderGround(
       for (let cy = 0; cy < canvasHeight; cy++) {
         const bitset = (dwGroundSet >>> bit) & 0x03;
         if (bitset !== 0) {
-          const tileId = getBgTile(rom, bitset, bgType, world, true);
-          if (tileId !== 0xff) {
+          const tileId = gtEntry[bitset];
+          if (tileId !== undefined && tileId !== 0xff) {
             out.push({ tileId, atlasIndex: groundAtlas, x: cx, y: cy, isGround: true });
           }
         }
@@ -376,8 +395,8 @@ export function renderGround(
       for (let cx = 0; cx < canvasWidth; cx++) {
         const bitset = (dwGroundSet >>> bit) & 0x03;
         if (bitset !== 0) {
-          const tileId = getBgTile(rom, bitset, bgType, world, false);
-          if (tileId !== 0xff) {
+          const tileId = gtEntry[bitset];
+          if (tileId !== undefined && tileId !== 0xff) {
             out.push({ tileId, atlasIndex: groundAtlas, x: cx, y: cy, isGround: true });
           }
         }

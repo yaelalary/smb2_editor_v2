@@ -27,6 +27,7 @@ import BaseButton from './components/common/BaseButton.vue';
 import { useEditorStore } from '@/stores/editor';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
 import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
+import DevRenderingDebug from './views/dev/DevRenderingDebug.vue';
 import { useRomStore } from '@/stores/rom';
 import { downloadRom } from '@/persistence/rom-download';
 import { buildRom } from '@/rom/rom-builder';
@@ -193,6 +194,7 @@ function onDownload(): void {
   <!-- Dev tools -->
   <DevTilesPreview v-if="devMode === 'tiles'" />
   <DevLevelsPreview v-else-if="devMode === 'levels'" />
+  <DevRenderingDebug v-else-if="devMode === 'rendering'" />
 
   <template v-else>
     <!-- Mobile gate (CSS-only via Tailwind breakpoint). -->

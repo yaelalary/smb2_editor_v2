@@ -26,7 +26,6 @@ import {
   getSingDim,
   getHorzDim,
   getVertDim,
-  getMasvDim,
   getEntrDim,
   getBgSet,
   emptyDim,
@@ -146,13 +145,28 @@ function renderVertical(
 }
 
 function renderMassive(
-  rom: Uint8Array, rawId: number, world: number,
+  _rom: Uint8Array, rawId: number, _world: number,
   posX: number, posY: number, atlas: number,
+  fx?: number, objectType?: number,
 ): RenderedTile[] {
   const sizeX = rawId >= 0x30 ? ((rawId - 0x30) & 0x0f) : 5;
   const sizeY = 0x0e;
   const idRegular = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
-  const dim = getMasvDim(rom, idRegular, world, fallbackDim(idRegular));
+
+  // Use static tables (grid-compatible tile IDs).
+  // For extended mass items (vid 8,9,12), try SITEM_DIM first.
+  // For regular mass items (24,25), use ITEM_DIM which has all 8 positions.
+  let dim: NesItemDim;
+  if (rawId >= 0x30 && fx !== undefined && objectType !== undefined) {
+    const extDim = SITEM_DIM[fx]?.[objectType]?.[idRegular];
+    dim = extDim ? {
+      topleft: extDim[0] ?? 0xff, top: extDim[1] ?? 0xff, topright: extDim[2] ?? 0xff,
+      left: extDim[3] ?? 0xff, right: extDim[4] ?? 0xff, middle: extDim[5] ?? 0xff,
+      bottomleft: extDim[6] ?? 0xff, bottomright: extDim[7] ?? 0xff,
+    } : fallbackDim(idRegular);
+  } else {
+    dim = fallbackDim(idRegular);
+  }
   const out: RenderedTile[] = [];
 
   pushTile(out, dim.topleft, posX, posY, atlas);
@@ -329,7 +343,7 @@ export function renderItem(
         case 10: case 11:
           return renderHorizontal(rom, rawId, world, item.tileX, item.tileY, atlas);
         case 8: case 9: case 12:
-          return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas);
+          return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, fx, header.objectType);
         default: return [];
       }
     }

@@ -11,7 +11,7 @@
  *      tile rendering replaces these rectangles when the lookup tables
  *      are ported in Phase 2.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import RomLoader from './components/RomLoader.vue';
 import LevelList from './components/LevelList.vue';
 import LevelCanvas from './components/LevelCanvas.vue';
@@ -19,6 +19,7 @@ import PropertiesPanel from './components/PropertiesPanel.vue';
 import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
 import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
+import MemoryBudgetIndicator from './components/MemoryBudgetIndicator.vue';
 import BaseButton from './components/common/BaseButton.vue';
 import { useEditorStore } from '@/stores/editor';
 import DevTilesPreview from './views/dev/DevTilesPreview.vue';
@@ -32,6 +33,8 @@ import type { ValidationSuccess } from '@/rom/validation';
 const rom = useRomStore();
 const editor = useEditorStore();
 useKeyboardShortcuts();
+
+const budgetRef = ref<InstanceType<typeof MemoryBudgetIndicator> | null>(null);
 
 const devMode = computed(() => {
   if (typeof window === 'undefined') return null;
@@ -109,9 +112,12 @@ function onDownload(): void {
           </span>
         </div>
         <div class="flex items-center gap-3">
+          <MemoryBudgetIndicator ref="budgetRef" />
           <BaseButton
             variant="primary"
             size="sm"
+            :disabled="budgetRef?.isOverBudget"
+            :title="budgetRef?.isOverBudget ? 'Too much data — remove some items to save' : ''"
             @click="onDownload"
           >
             Download ROM

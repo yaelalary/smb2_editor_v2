@@ -4,26 +4,45 @@
  *
  * Categorized palette of enemy types. Same UX as TileLibrary but for
  * enemies. Drag from here onto the canvas to place enemies.
- * Uses atlas-8 (enemy sprites) for previews.
+ * Uses atlas-8 (enemy sprites) with palette colorization.
  */
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch, nextTick } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { ENEMY_NAMES, ENEMY_DIM } from '@/rom/nesleveldef';
 import { ENEMY_DRAG_MIME } from '@/rom/item-categories';
+import { useRomStore } from '@/stores/rom';
+import { useHistoryStore } from '@/stores/history';
+import { readLevelPalette } from '@/rom/palette-reader';
 import {
-  getAtlasImage,
   metatileRect,
-  preloadAtlases,
+  preloadAllAtlases,
   METATILE_SIZE,
+  getColorizedAtlas,
 } from '@/assets/metatiles';
 
 const ENEMY_ATLAS = 8;
+const rom = useRomStore();
+const history = useHistoryStore();
 const atlasReady = ref(false);
+const drawGeneration = ref(0);
 
 onMounted(async () => {
-  await preloadAtlases([ENEMY_ATLAS]);
+  await preloadAllAtlases();
   atlasReady.value = true;
 });
+
+watch(
+  () => [rom.activeSlot, history.revision],
+  () => { drawGeneration.value++; nextTick(() => { drawGeneration.value++; }); },
+);
+
+function getCurrentPalette() {
+  const romData = rom.romData;
+  if (!romData) return null;
+  const b = rom.activeBlock;
+  if (!b) return null;
+  return readLevelPalette(romData.rom, rom.activeSlot, (b as { header: { palette: number } }).header.palette);
+}
 
 interface EnemyCategory {
   label: string;
@@ -54,6 +73,33 @@ function onDragStart(e: DragEvent, enemyId: number): void {
   if (!e.dataTransfer) return;
   e.dataTransfer.effectAllowed = 'copy';
   e.dataTransfer.setData(ENEMY_DRAG_MIME, JSON.stringify({ enemyId }));
+}
+
+function drawEnemy(el: unknown, eid: number): void {
+  if (!el) return;
+  const canvas = el as HTMLCanvasElement;
+  const palette = getCurrentPalette();
+  const src = palette ? getColorizedAtlas(ENEMY_ATLAS, palette) : null;
+
+  void drawGeneration.value;
+
+  const key = `${eid}:${palette?.nesIndices.join(',') ?? ''}`;
+  if (canvas.dataset['drawn'] === key) return;
+
+  canvas.width = METATILE_SIZE;
+  canvas.height = METATILE_SIZE;
+  canvas.style.width = '24px';
+  canvas.style.height = '24px';
+  canvas.style.imageRendering = 'pixelated';
+  const ctx = canvas.getContext('2d');
+  if (!ctx || !src) return;
+
+  ctx.clearRect(0, 0, METATILE_SIZE, METATILE_SIZE);
+  const sid = spriteId(eid);
+  if (sid === null) return;
+  const { sx, sy } = metatileRect(sid);
+  ctx.drawImage(src, sx, sy, METATILE_SIZE, METATILE_SIZE, 0, 0, METATILE_SIZE, METATILE_SIZE);
+  canvas.dataset['drawn'] = key;
 }
 </script>
 
@@ -88,23 +134,8 @@ function onDragStart(e: DragEvent, enemyId: number): void {
           >
             <canvas
               v-if="atlasReady && spriteId(eid) !== null"
-              :ref="(el) => {
-                if (!el) return;
-                const canvas = el as HTMLCanvasElement;
-                const atlas = getAtlasImage(ENEMY_ATLAS);
-                if (!atlas || canvas.dataset['drawn'] === String(eid)) return;
-                canvas.width = METATILE_SIZE;
-                canvas.height = METATILE_SIZE;
-                canvas.style.width = '24px';
-                canvas.style.height = '24px';
-                canvas.style.imageRendering = 'pixelated';
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
-                const sid = spriteId(eid)!;
-                const { sx, sy } = metatileRect(sid);
-                ctx.drawImage(atlas, sx, sy, METATILE_SIZE, METATILE_SIZE, 0, 0, METATILE_SIZE, METATILE_SIZE);
-                canvas.dataset['drawn'] = String(eid);
-              }"
+              :key="`${eid}-${drawGeneration}`"
+              :ref="(el) => drawEnemy(el, eid)"
               class="shrink-0 bg-black/20 rounded-sm"
             />
             <div

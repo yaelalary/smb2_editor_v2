@@ -100,3 +100,93 @@ export async function preloadAtlases(indices: number[]): Promise<void> {
 export async function preloadAllAtlases(): Promise<void> {
   await preloadAtlases(ATLAS_URLS.map((_, i) => i));
 }
+
+// ─── Palette colorization (UseGamma port) ──────────────────────────
+//
+// Atlas pixels are palette-indexed grayscale: R=G=B, where
+// paletteIndex = Math.floor(gray / 0x10). Index 0-15 maps to one of
+// the level's 16 NES palette colors. Magenta (alpha=0) is transparent.
+//
+// This mirrors the C++ UseGamma() function which creates bmGammaTpl
+// by remapping each template pixel through the palette lookup table.
+
+import type { LevelPalette } from '@/rom/palette-reader';
+
+/**
+ * Cache key = "atlasIndex:nesIdx0,nesIdx1,...,nesIdx15".
+ * We cache by the actual NES color indices so levels sharing the same
+ * palette reuse the same colorized canvas.
+ */
+const colorizedCache = new Map<string, OffscreenCanvas>();
+
+function paletteKey(atlasIndex: number, palette: LevelPalette): string {
+  return `${atlasIndex}:${palette.nesIndices.join(',')}`;
+}
+
+/**
+ * Get a palette-colorized version of an atlas. Returns an OffscreenCanvas
+ * where every grayscale pixel has been remapped through the level's NES
+ * palette. Cached per (atlas, palette).
+ */
+export function getColorizedAtlas(
+  atlasIndex: number,
+  palette: LevelPalette,
+): OffscreenCanvas | null {
+  const key = paletteKey(atlasIndex, palette);
+  const cached = colorizedCache.get(key);
+  if (cached) return cached;
+
+  const srcImg = getAtlasImage(atlasIndex);
+  if (!srcImg) return null;
+
+  const w = srcImg.naturalWidth;
+  const h = srcImg.naturalHeight;
+  const offscreen = new OffscreenCanvas(w, h);
+  const ctx = offscreen.getContext('2d');
+  if (!ctx) return null;
+
+  // Draw original atlas
+  ctx.drawImage(srcImg, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+
+  // Build 16-entry RGB lookup from palette
+  const lut: [number, number, number][] = [];
+  for (let i = 0; i < 16; i++) {
+    lut.push(palette.colors[i] ?? [0, 0, 0]);
+  }
+
+  // Remap every pixel
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3]!;
+    if (a === 0) continue; // transparent → keep
+
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+
+    // Grayscale check: R≈G≈B (allow small tolerance for rounding)
+    if (Math.abs(r - g) <= 1 && Math.abs(g - b) <= 1) {
+      const idx = Math.min(Math.floor(r / 0x10), 15);
+      const color = lut[idx]!;
+      data[i] = color[0];
+      data[i + 1] = color[1];
+      data[i + 2] = color[2];
+      // alpha stays 255
+    }
+    // Non-grayscale pixels (like the yellow checkerboard) → make transparent
+    // since they represent empty/unused areas of the atlas
+    else {
+      data[i + 3] = 0;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  colorizedCache.set(key, offscreen);
+  return offscreen;
+}
+
+/** Clear the colorized atlas cache (call on ROM unload). */
+export function clearColorizedCache(): void {
+  colorizedCache.clear();
+}

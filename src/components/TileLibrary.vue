@@ -3,40 +3,56 @@
  * Tile library sidebar — Unit 9.
  *
  * A categorized palette of all 61 placeable item types. Each item
- * shows its metatile sprite (from atlas-0) + name, and is draggable
- * via HTML5 DnD. On `dragstart`, the item's ID is set as the
- * transfer payload so the canvas drop handler (Unit 10) knows what
- * was dropped.
+ * shows its metatile sprite (from the level's item atlas, palette-
+ * colorized) + name, and is draggable via HTML5 DnD.
  *
- * Items 0-47: fixed-size, sprite from ITEM_DIM[id][0] (topleft tile).
- * Items 48-60: variable-size, sprite from SITEM_DIM[fx][objType][baseType][0].
- *   For the library preview we use fx=0, objType=0 as a representative.
- *
- * The drag MIME type is 'application/smb2-item' with a JSON payload:
- *   { "itemId": number }
+ * The atlas used depends on the current level's FX value:
+ *   fx=0 → atlas 4, fx=1 → atlas 5, fx=2 → atlas 6, fx=3 → atlas 7.
+ * Colors are remapped through the level's NES palette.
  */
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch, nextTick } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { ITEM_CATEGORIES, DRAG_MIME } from '@/rom/item-categories';
 import { ITEM_NAMES, ITEM_DIM, getItemDimTiles } from '@/rom/nesleveldef';
+import { useRomStore } from '@/stores/rom';
+import { useHistoryStore } from '@/stores/history';
+import { getFxForSlot } from '@/rom/level-layout';
+import { readLevelPalette } from '@/rom/palette-reader';
 import {
-  getAtlasImage,
   metatileRect,
-  preloadAtlases,
+  preloadAllAtlases,
   METATILE_SIZE,
+  getColorizedAtlas,
 } from '@/assets/metatiles';
 
+const rom = useRomStore();
+const history = useHistoryStore();
 const atlasReady = ref(false);
+const drawGeneration = ref(0);
 
 onMounted(async () => {
-  await preloadAtlases([0]);
+  await preloadAllAtlases();
   atlasReady.value = true;
 });
 
-/**
- * Get the primary metatile ID for an item (used for the library icon).
- * Returns null when the item has no primary tile (0xFF = transparent).
- */
+// Re-draw library thumbnails when slot changes (different world = different atlas + palette)
+watch(
+  () => [rom.activeSlot, history.revision],
+  () => { drawGeneration.value++; nextTick(() => { drawGeneration.value++; }); },
+);
+
+function getCurrentPalette() {
+  const romData = rom.romData;
+  if (!romData) return null;
+  const b = rom.activeBlock;
+  if (!b) return null;
+  return readLevelPalette(romData.rom, rom.activeSlot, (b as { header: { palette: number } }).header.palette);
+}
+
+function getItemAtlasIndex(): number {
+  return getFxForSlot(rom.activeSlot) + 4;
+}
+
 function primaryTileId(itemId: number): number | null {
   let tiles: readonly number[];
   if (itemId < 48) {
@@ -56,6 +72,35 @@ function onDragStart(e: DragEvent, itemId: number): void {
 
 function itemName(id: number): string {
   return ITEM_NAMES[id] ?? `Item #${id}`;
+}
+
+function drawTile(el: unknown, itemId: number): void {
+  if (!el) return;
+  const canvas = el as HTMLCanvasElement;
+  const palette = getCurrentPalette();
+  const atlasIdx = getItemAtlasIndex();
+  const src = palette ? getColorizedAtlas(atlasIdx, palette) : null;
+
+  // Stamp generation so Vue re-runs this when drawGeneration changes
+  void drawGeneration.value;
+
+  const key = `${itemId}:${atlasIdx}:${palette?.nesIndices.join(',') ?? ''}`;
+  if (canvas.dataset['drawn'] === key) return;
+
+  canvas.width = METATILE_SIZE;
+  canvas.height = METATILE_SIZE;
+  canvas.style.width = '24px';
+  canvas.style.height = '24px';
+  canvas.style.imageRendering = 'pixelated';
+  const ctx = canvas.getContext('2d');
+  if (!ctx || !src) return;
+
+  ctx.clearRect(0, 0, METATILE_SIZE, METATILE_SIZE);
+  const tid = primaryTileId(itemId);
+  if (tid === null) return;
+  const { sx, sy } = metatileRect(tid);
+  ctx.drawImage(src, sx, sy, METATILE_SIZE, METATILE_SIZE, 0, 0, METATILE_SIZE, METATILE_SIZE);
+  canvas.dataset['drawn'] = key;
 }
 </script>
 
@@ -88,29 +133,12 @@ function itemName(id: number): string {
                    border border-transparent hover:border-panel-border"
             @dragstart="(e) => onDragStart(e, itemId)"
           >
-            <!-- Sprite preview from atlas -->
             <canvas
               v-if="atlasReady && primaryTileId(itemId) !== null"
-              :ref="(el) => {
-                if (!el) return;
-                const canvas = el as HTMLCanvasElement;
-                const atlas = getAtlasImage(0);
-                if (!atlas || canvas.dataset['drawn'] === String(itemId)) return;
-                canvas.width = METATILE_SIZE;
-                canvas.height = METATILE_SIZE;
-                canvas.style.width = '24px';
-                canvas.style.height = '24px';
-                canvas.style.imageRendering = 'pixelated';
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
-                const tid = primaryTileId(itemId)!;
-                const { sx, sy } = metatileRect(tid);
-                ctx.drawImage(atlas, sx, sy, METATILE_SIZE, METATILE_SIZE, 0, 0, METATILE_SIZE, METATILE_SIZE);
-                canvas.dataset['drawn'] = String(itemId);
-              }"
+              :key="`${itemId}-${drawGeneration}`"
+              :ref="(el) => drawTile(el, itemId)"
               class="shrink-0 bg-black/20 rounded-sm"
             />
-            <!-- Fallback when no sprite -->
             <div
               v-else
               class="w-6 h-6 shrink-0 rounded-sm bg-accent/20 flex items-center justify-center text-[8px] font-mono text-ink-muted"

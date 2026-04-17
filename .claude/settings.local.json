@@ -30,7 +30,15 @@
       "Bash(npx vitest *)",
       "Bash(npx eslint *)",
       "Bash(npx tsc *)",
-      "Bash(ls /c/Users/Yael/Documents/Dev/Web/smb2/smb2res/rc/*.bmp)"
+      "Bash(ls /c/Users/Yael/Documents/Dev/Web/smb2/smb2res/rc/*.bmp)",
+      "Bash(xargs grep *)",
+      "Bash(find /c/Users/Yael/Documents/Dev/Web/smb2/smb2 -name \"*.cpp\" -exec grep -l \"LoadBitmapW\\\\|LoadBitmap\" {} \\\\;)",
+      "Bash(npx vue-tsc *)",
+      "Bash(npx vite *)",
+      "Bash(ls -la \"c:/Users/Yael/Documents/Dev/Web/smb2/smb2res/rc/\"[0-9]*.bmp)",
+      "Bash(python3 -c ' *)",
+      "Bash(node -e ' *)",
+      "Bash(iconv -f UTF-16LE -t UTF-8 \"c:/Users/Yael/Documents/Dev/Web/smb2/smb2/smb2.rc\")"
     ]
   }
 }

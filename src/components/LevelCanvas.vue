@@ -12,28 +12,25 @@ import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
-import { levelDimensions, ITEM_COLORS, getFxForSlot } from '@/rom/level-layout';
-import { GROUND_SET_H, GROUND_SET_V, GROUND_TYPE_H, GROUND_TYPE_V } from '@/rom/nesleveldef';
+import { levelDimensions, ITEM_COLORS } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
-import { ITEM_DIM, getItemDimTiles, ENEMY_DIM } from '@/rom/nesleveldef';
+import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
+import { renderItem, renderGround } from '@/rom/item-renderer';
+import type { RenderedTile } from '@/rom/item-renderer';
 import {
-  getAtlasImage,
   metatileRect,
   preloadAllAtlases,
   METATILE_SIZE,
+  getColorizedAtlas,
 } from '@/assets/metatiles';
+import type { LevelPalette } from '@/rom/palette-reader';
 
 const TILE_PX = 16;
-/**
- * Atlas 4 is the ITEM atlas (interior/special). The C++ GetSingDim
- * sets type=4 for virtually all items. Atlases 0-3 are for ground tiles.
- */
-const ITEM_ATLAS_INDEX = 4;
-const ENEMY_ATLAS_INDEX_C = 8;
+const ENEMY_ATLAS_INDEX = 8;
 
 const rom = useRomStore();
 const history = useHistoryStore();
@@ -248,150 +245,71 @@ function onKeyDown(e: KeyboardEvent): void {
 // ─── Drawing ────────────────────────────────────────────────────────
 
 /**
- * Read a tile ID for an item directly from the ROM, mirroring the C++
- * GetSingDim function. Returns { tileId, atlasIndex } or null if the
- * item isn't handled by ROM-read logic.
- *
- * ROM offsets from `cneseditor_tiles.cpp`:
- *   Items 0-5 (blocks):     ROM[0xCB50+id] (or 0xCB57+id for castle world)
- *   Item 16 (big cloud):    ROM[0xCCC2]
- *   Item 17 (small cloud):  ROM[0xCCCE]
- *   Items 32-47 (herbs etc): ROM[0xCD40+(id&0x0F)]
+ * Draw a single rendered tile on the canvas using the palette-colorized
+ * atlas. This is the web equivalent of the C++ DrawGamma/DrawGrGamma.
  */
-function readItemTileFromRom(itemId: number): number | null {
-  const romData = rom.romData;
-  if (!romData) return null;
-  const r = romData.rom;
-
-  if (itemId >= 0 && itemId <= 5) {
-    return r[0xcb50 + itemId] ?? null;
-  }
-  if (itemId === 16) return r[0xccc2] ?? null;
-  if (itemId === 17) return r[0xccce] ?? null;
-  if (itemId >= 32 && itemId <= 47) {
-    return r[0xcd40 + (itemId & 0x0f)] ?? null;
-  }
-  return null; // not a ROM-read item, fall back to static table
+function blitTile(
+  ctx: CanvasRenderingContext2D,
+  tile: RenderedTile,
+  palette: LevelPalette | null,
+): void {
+  const src = palette
+    ? getColorizedAtlas(tile.atlasIndex, palette)
+    : null;
+  if (!src) return;
+  const { sx, sy } = metatileRect(tile.tileId);
+  ctx.drawImage(
+    src, sx, sy, METATILE_SIZE, METATILE_SIZE,
+    tile.x * TILE_PX, tile.y * TILE_PX, TILE_PX, TILE_PX,
+  );
 }
 
 /**
- * Get the tile ID + atlas for an item. Tries ROM-read first (accurate),
- * falls back to static ITEM_DIM (approximate).
- */
-function getItemRender(
-  rawId: number,
-  fx: number,
-  objectType: number,
-): { tileId: number; atlasIndex: number } | null {
-  if (rawId < 0) return null;
-
-  // Try ROM-read first (most accurate).
-  const romTile = readItemTileFromRom(rawId < 48 ? rawId : -1);
-  if (romTile !== null && romTile !== 0xff) {
-    return { tileId: romTile, atlasIndex: ITEM_ATLAS_INDEX };
-  }
-
-  // Fall back to static lookup table.
-  let tiles: readonly number[];
-  if (rawId < 48) {
-    const dim = ITEM_DIM[rawId];
-    if (!dim) return null;
-    tiles = dim;
-  } else {
-    const baseType = (rawId - 48) >> 4;
-    tiles = getItemDimTiles(baseType + 48, fx, objectType);
-  }
-
-  const tileId = tiles[0];
-  if (tileId === undefined || tileId === 0xff) return null;
-  return { tileId, atlasIndex: ITEM_ATLAS_INDEX };
-}
-
-/**
- * Draw the ground/background tile pattern. Uses the header's groundSet
- * bitmask to determine which rows have ground tiles, and groundType to
- * pick the tile appearance.
+ * Draw ground tiles from the header's default groundSet/groundType.
+ * Uses renderGround() which reads tile IDs from ROM per-world,
+ * matching the C++ DrawGroundEx.
  */
 function drawGround(
   ctx: CanvasRenderingContext2D,
   b: LevelBlock,
   widthTiles: number,
   heightTiles: number,
+  palette: LevelPalette | null,
 ): void {
-  const fx = getFxForSlot(rom.activeSlot);
-  const atlas = getAtlasImage(fx); // Ground uses atlas 0-3 based on fx/world
-  if (!atlas) return;
+  const romData = rom.romData;
+  if (!romData) return;
 
-  const isH = b.header.direction === 1;
-  const gsTable = isH ? GROUND_SET_H : GROUND_SET_V;
-  const gtTable = isH ? GROUND_TYPE_H : GROUND_TYPE_V;
-
-  const gsValue = gsTable[b.header.groundSet];
-  if (gsValue === undefined) return;
-
-  // Ground type: GROUND_TYPE_H[fx][groundType] → [gr0, gr1, gr2, gr3]
-  const gtFx = gtTable[fx];
-  const gtEntry = gtFx?.[b.header.groundType];
-  const groundTileId = gtEntry?.[0]; // gr0 = primary fill tile
-  if (groundTileId === undefined || groundTileId === 0xff) return;
-
-  const pages = b.header.length + 1;
-
-  for (let page = 0; page < pages; page++) {
-    for (let row = 0; row < 15; row++) {
-      // Bitmask interpretation: bit (15 - row) for horizontal levels.
-      // Bit 1 = row 14 (bottom), bit 15 = row 0 (top).
-      const bitIndex = 15 - row;
-      if (!((gsValue >> bitIndex) & 1)) continue;
-
-      for (let col = 0; col < 16; col++) {
-        const tx = isH ? page * 16 + col : col;
-        const ty = isH ? row : page * 15 + row;
-        if (tx >= widthTiles || ty >= heightTiles) continue;
-
-        const { sx, sy } = metatileRect(groundTileId);
-        ctx.drawImage(atlas, sx, sy, METATILE_SIZE, METATILE_SIZE,
-          tx * TILE_PX, ty * TILE_PX, TILE_PX, TILE_PX);
-      }
-    }
-  }
+  const tiles = renderGround(
+    romData.rom, rom.activeSlot, b.header,
+    widthTiles, heightTiles,
+    b.header.groundSet, b.header.groundType, 0, 0,
+  );
+  for (const t of tiles) blitTile(ctx, t, palette);
 }
 
+/**
+ * Draw a level item using the full multi-tile renderer ported from C++.
+ * Falls back to a colored rectangle with hex label if no tiles produced.
+ */
 function drawItemOnCanvas(
   ctx: CanvasRenderingContext2D,
   item: LevelItem,
-  objectType: number,
-  fx: number,
   isSelected: boolean,
+  palette: LevelPalette | null,
 ): void {
   if (item.tileX < 0 || item.tileY < 0) return;
-  const x = item.tileX * TILE_PX;
-  const y = item.tileY * TILE_PX;
 
-  const render = getItemRender(item.itemId, fx, objectType);
-  const atlas = render ? getAtlasImage(render.atlasIndex) : null;
+  const romData = rom.romData;
+  const tiles: RenderedTile[] = romData
+    ? renderItem(romData.rom, item, rom.activeSlot, block.value!.header)
+    : [];
 
-  if (atlas && render) {
-    const { sx, sy } = metatileRect(render.tileId);
-    ctx.drawImage(atlas, sx, sy, METATILE_SIZE, METATILE_SIZE,
-      x, y, TILE_PX, TILE_PX);
-
-    // For multi-tile items (jars, vines, doors), also draw middle and
-    // bottom tiles if they exist in the static dimension table.
-    if (item.itemId < 48) {
-      const dimEntry = ITEM_DIM[item.itemId];
-      if (dimEntry) {
-        const drawExtra = (tid: number | undefined, dy: number) => {
-          if (tid === undefined || tid === 0xff) return;
-          const r = metatileRect(tid);
-          ctx.drawImage(atlas, r.sx, r.sy, METATILE_SIZE, METATILE_SIZE,
-            x, y + dy * TILE_PX, TILE_PX, TILE_PX);
-        };
-        drawExtra(dimEntry[5], 1); // middle
-        drawExtra(dimEntry[6], 2); // bottomleft
-      }
-    }
+  if (tiles.length > 0) {
+    for (const t of tiles) blitTile(ctx, t, palette);
   } else {
+    // Fallback: colored rectangle with hex ID
+    const x = item.tileX * TILE_PX;
+    const y = item.tileY * TILE_PX;
     const color = ITEM_COLORS[item.kind] ?? '#666';
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.75;
@@ -410,11 +328,27 @@ function drawItemOnCanvas(
     ctx.textBaseline = 'alphabetic';
   }
 
-  // Selection ring.
+  // Selection ring — covers all tiles of the item.
   if (isSelected) {
-    ctx.strokeStyle = '#ffcc00';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, TILE_PX, TILE_PX);
+    if (tiles.length > 0) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const t of tiles) {
+        if (t.x < minX) minX = t.x;
+        if (t.y < minY) minY = t.y;
+        if (t.x > maxX) maxX = t.x;
+        if (t.y > maxY) maxY = t.y;
+      }
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(
+        minX * TILE_PX, minY * TILE_PX,
+        (maxX - minX + 1) * TILE_PX, (maxY - minY + 1) * TILE_PX,
+      );
+    } else {
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
+    }
   }
 }
 
@@ -479,20 +413,21 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     }
   }
 
-  // Ground rendering (background pattern from groundSet).
-  drawGround(ctx, b, widthTiles, heightTiles);
+  // Ground rendering — reads tile IDs from ROM per-world.
+  drawGround(ctx, b, widthTiles, heightTiles, palette);
 
-  // Items.
-  const fx = getFxForSlot(rom.activeSlot);
+  // Items — full multi-tile rendering ported from C++ Draw*ObjectEx.
   for (const item of b.items) {
-    drawItemOnCanvas(ctx, item, b.header.objectType, fx, item === selectedItem.value);
+    drawItemOnCanvas(ctx, item, item === selectedItem.value, palette);
   }
 
-  // Enemy overlay.
+  // Enemy overlay (also palette-colorized).
   if (editor.showEnemies) {
     const enemyBlock = getEnemyBlock();
-    const enemyAtlas = getAtlasImage(ENEMY_ATLAS_INDEX_C);
-    if (enemyBlock && enemyAtlas) {
+    const enemyAtlasSrc = palette
+      ? getColorizedAtlas(ENEMY_ATLAS_INDEX, palette)
+      : null;
+    if (enemyBlock && enemyAtlasSrc) {
       for (let pageIdx = 0; pageIdx < enemyBlock.pages.length; pageIdx++) {
         const page = enemyBlock.pages[pageIdx]!;
         for (const enemy of page.enemies) {
@@ -502,7 +437,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
           const spriteId = dim?.[0];
           if (spriteId !== undefined && spriteId !== 0xff) {
             const { sx, sy } = metatileRect(spriteId);
-            ctx.drawImage(enemyAtlas, sx, sy, METATILE_SIZE, METATILE_SIZE, ex, ey, TILE_PX, TILE_PX);
+            ctx.drawImage(enemyAtlasSrc, sx, sy, METATILE_SIZE, METATILE_SIZE, ex, ey, TILE_PX, TILE_PX);
           } else {
             ctx.fillStyle = 'rgba(255,80,80,0.6)';
             ctx.fillRect(ex + 1, ey + 1, TILE_PX - 2, TILE_PX - 2);

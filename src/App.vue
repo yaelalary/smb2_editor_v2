@@ -11,7 +11,7 @@
  *      tile rendering replaces these rectangles when the lookup tables
  *      are ported in Phase 2.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onUnmounted } from 'vue';
 import RomLoader from './components/RomLoader.vue';
 import LevelList from './components/LevelList.vue';
 import LevelCanvas from './components/LevelCanvas.vue';
@@ -31,6 +31,12 @@ import { useRomStore } from '@/stores/rom';
 import { downloadRom } from '@/persistence/rom-download';
 import { buildRom } from '@/rom/rom-builder';
 import { downloadProject, importProject } from '@/persistence/project-file';
+import {
+  hasAutoSave,
+  restoreAutoSave,
+  clearAutoSave,
+  createAutoSaveManager,
+} from '@/persistence/localstorage';
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
 import { useHistoryStore } from '@/stores/history';
 import { useToast } from '@/composables/useToast';
@@ -44,6 +50,56 @@ useKeyboardShortcuts();
 
 const budgetRef = ref<InstanceType<typeof MemoryBudgetIndicator> | null>(null);
 const showUnloadConfirm = ref(false);
+const showRestorePrompt = ref(false);
+const autoSaveAvailable = ref(true);
+
+// ─── Auto-save ─────────────────────────────────────────────────────
+
+const autoSaveManager = createAutoSaveManager(
+  () => {
+    const data = rom.romData;
+    const levels = rom.levelMap;
+    const enemies = rom.enemyMap;
+    if (!data || !levels || !enemies) return null;
+    return {
+      rom: data.rom,
+      levelMap: levels as unknown as import('@/rom/model').LevelMap,
+      enemyMap: enemies as unknown as import('@/rom/model').EnemyMap,
+      activeSlot: rom.activeSlot,
+    };
+  },
+  () => { autoSaveAvailable.value = false; },
+);
+
+// Trigger auto-save on each command
+watch(() => history.revision, () => {
+  if (rom.isLoaded) autoSaveManager.notifyCommand();
+});
+
+onUnmounted(() => autoSaveManager.stop());
+
+// Check for auto-save on boot
+if (hasAutoSave()) {
+  showRestorePrompt.value = true;
+}
+
+async function restoreSession(): Promise<void> {
+  showRestorePrompt.value = false;
+  const data = await restoreAutoSave();
+  if (!data) {
+    showToast('Could not restore previous session.');
+    return;
+  }
+  rom.loadRom(data.validation);
+  rom.selectSlot(data.activeSlot);
+  history.clear();
+  showToast('Previous session restored.');
+}
+
+function discardSession(): void {
+  showRestorePrompt.value = false;
+  clearAutoSave();
+}
 
 function onUnloadClick(): void {
   // If there are unsaved edits, confirm first.
@@ -59,6 +115,7 @@ function confirmUnload(): void {
   showUnloadConfirm.value = false;
   rom.unload();
   history.clear();
+  clearAutoSave();
 }
 
 function cancelUnload(): void {
@@ -153,12 +210,44 @@ function onDownload(): void {
       </div>
     </main>
 
-    <!-- Desktop: no ROM loaded → RomLoader. -->
+    <!-- Desktop: no ROM loaded → restore prompt or RomLoader. -->
     <main
       v-if="!rom.isLoaded"
       class="hidden lg:flex min-h-screen items-center justify-center p-6"
     >
-      <RomLoader @loaded="onLoaded" />
+      <!-- Auto-save restore prompt -->
+      <div
+        v-if="showRestorePrompt"
+        class="max-w-sm text-center space-y-4"
+      >
+        <h2 class="text-lg font-bold">
+          Resume previous session?
+        </h2>
+        <p class="text-sm text-ink-muted">
+          An auto-saved session was found. Would you like to pick up where you left off?
+        </p>
+        <div class="flex justify-center gap-3">
+          <BaseButton
+            variant="primary"
+            size="sm"
+            @click="restoreSession"
+          >
+            Resume
+          </BaseButton>
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            @click="discardSession"
+          >
+            Start fresh
+          </BaseButton>
+        </div>
+      </div>
+
+      <RomLoader
+        v-else
+        @loaded="onLoaded"
+      />
     </main>
 
     <!-- Desktop: ROM loaded → three-panel editor layout. -->
@@ -179,6 +268,13 @@ function onDownload(): void {
           </span>
         </div>
         <div class="flex items-center gap-3">
+          <span
+            v-if="!autoSaveAvailable"
+            class="text-[10px] text-status-warn"
+            title="Auto-save isn't available. Export your project often."
+          >
+            No auto-save
+          </span>
           <MemoryBudgetIndicator ref="budgetRef" />
           <BaseButton
             variant="primary"

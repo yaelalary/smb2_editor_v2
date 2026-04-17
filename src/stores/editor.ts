@@ -8,7 +8,7 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
 
-export type EditorTool = 'tiles' | 'enemies';
+export type EditorTool = 'tiles' | 'enemies' | 'links';
 
 export const useEditorStore = defineStore('editor', () => {
   /** Which editing layer is active. */

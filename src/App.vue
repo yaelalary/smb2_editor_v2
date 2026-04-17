@@ -18,6 +18,7 @@ import LevelCanvas from './components/LevelCanvas.vue';
 import PropertiesPanel from './components/PropertiesPanel.vue';
 import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
+import LevelLinksEditor from './components/LevelLinksEditor.vue';
 import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
 import MemoryBudgetIndicator from './components/MemoryBudgetIndicator.vue';
 import ConfirmationDialog from './components/ConfirmationDialog.vue';
@@ -225,7 +226,7 @@ function onDownload(): void {
       >
         <LevelList class="min-h-0 overflow-hidden border-b border-panel-border" />
 
-        <!-- Tool tabs: Tiles / Enemies -->
+        <!-- Tool tabs: Tiles / Enemies / Areas -->
         <div class="flex border-b border-panel-border bg-panel-subtle">
           <button
             :class="[
@@ -249,6 +250,17 @@ function onDownload(): void {
           >
             Enemies
           </button>
+          <button
+            :class="[
+              'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
+              editor.activeTool === 'links'
+                ? 'bg-panel text-ink border-b-2 border-accent'
+                : 'text-ink-muted hover:text-ink',
+            ]"
+            @click="editor.activeTool = 'links'"
+          >
+            Areas
+          </button>
         </div>
 
         <TileLibrary
@@ -256,6 +268,10 @@ function onDownload(): void {
           class="min-h-0 overflow-hidden"
         />
         <EnemyLibrary
+          v-else-if="editor.activeTool === 'enemies'"
+          class="min-h-0 overflow-hidden"
+        />
+        <LevelLinksEditor
           v-else
           class="min-h-0 overflow-hidden"
         />

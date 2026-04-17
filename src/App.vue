@@ -28,11 +28,16 @@ import DevLevelsPreview from './views/dev/DevLevelsPreview.vue';
 import { useRomStore } from '@/stores/rom';
 import { downloadRom } from '@/persistence/rom-download';
 import { buildRom } from '@/rom/rom-builder';
+import { downloadProject, importProject } from '@/persistence/project-file';
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts';
+import { useHistoryStore } from '@/stores/history';
+import { useToast } from '@/composables/useToast';
 import type { ValidationSuccess } from '@/rom/validation';
 
 const rom = useRomStore();
 const editor = useEditorStore();
+const history = useHistoryStore();
+const { show: showToast } = useToast();
 useKeyboardShortcuts();
 
 const budgetRef = ref<InstanceType<typeof MemoryBudgetIndicator> | null>(null);
@@ -44,6 +49,44 @@ const devMode = computed(() => {
 
 function onLoaded(validation: ValidationSuccess): void {
   rom.loadRom(validation);
+}
+
+const projectInputRef = ref<HTMLInputElement | null>(null);
+
+function onExportProject(): void {
+  const data = rom.romData;
+  const levels = rom.levelMap;
+  const enemies = rom.enemyMap;
+  if (!data || !levels || !enemies) return;
+  downloadProject(
+    data.rom,
+    levels as unknown as import('@/rom/model').LevelMap,
+    enemies as unknown as import('@/rom/model').EnemyMap,
+    rom.activeSlot,
+  );
+  showToast('Project exported');
+}
+
+function onImportClick(): void {
+  projectInputRef.value?.click();
+}
+
+async function onImportFile(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  input.value = '';
+
+  const result = await importProject(file);
+  if ('kind' in result) {
+    showToast(result.message);
+    return;
+  }
+
+  rom.loadRom(result.validation);
+  rom.selectSlot(result.activeSlot);
+  history.clear();
+  showToast('Project imported');
 }
 
 function onDownload(): void {
@@ -123,6 +166,27 @@ function onDownload(): void {
           >
             Download ROM
           </BaseButton>
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            @click="onExportProject"
+          >
+            Export project
+          </BaseButton>
+          <BaseButton
+            variant="secondary"
+            size="sm"
+            @click="onImportClick"
+          >
+            Import project
+          </BaseButton>
+          <input
+            ref="projectInputRef"
+            type="file"
+            accept=".smb2proj"
+            class="hidden"
+            @change="onImportFile"
+          >
           <button
             class="text-xs text-ink-muted hover:text-ink underline"
             @click="rom.unload()"

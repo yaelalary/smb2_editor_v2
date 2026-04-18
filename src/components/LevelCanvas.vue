@@ -43,6 +43,11 @@ const selectedEnemy = ref<{ enemy: EnemyItem; pageIndex: number } | null>(null);
 // Ghost position for drop preview.
 const ghostTile = ref<{ x: number; y: number } | null>(null);
 
+// Drag preview — when dragging selected items, render a semi-transparent
+// copy at the current hover tile so the user sees the landing position
+// before releasing. `dx/dy` is the delta from each item's original anchor.
+const dragPreview = ref<{ dx: number; dy: number } | null>(null);
+
 // Rubber-band selection rectangle (tile coordinates).
 const rubberBand = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
@@ -177,8 +182,15 @@ function onMouseMove(e: MouseEvent): void {
   const pos = tileFromEvent(e);
   if (!pos) return;
 
-  // If dragging from a selected item → will be a group move on mouseUp
+  // If dragging from a selected item → will be a group move on mouseUp.
+  // Keep a live ghost at the hover offset so the user sees where items land.
   if (selectedItems.value.some((it) => it.tileX === mouseDownPos!.x && it.tileY === mouseDownPos!.y)) {
+    const dx = pos.x - mouseDownPos.x;
+    const dy = pos.y - mouseDownPos.y;
+    if (!dragPreview.value || dragPreview.value.dx !== dx || dragPreview.value.dy !== dy) {
+      dragPreview.value = { dx, dy };
+      redraw();
+    }
     return;
   }
 
@@ -254,10 +266,15 @@ function onMouseUp(e: MouseEvent): void {
         );
       }
     }
+    dragPreview.value = null;
     mouseDownPos = null;
     redraw();
     return;
   }
+
+  // If we were showing a drag preview but ended on the same tile (no move),
+  // still clear it on release.
+  dragPreview.value = null;
 
   // ─── Tile mode: click to select/toggle ─────────────────────────
   const hit = hitTestTile(upPos.x, upPos.y);
@@ -415,6 +432,39 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       ctx.strokeStyle = '#ffcc00';
       ctx.lineWidth = 2;
       ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
+    }
+
+    // Drag preview — render selected items at their offset-applied
+    // position into a throwaway grid, then blit with alpha so the user
+    // sees where items will land before releasing.
+    const dp = dragPreview.value;
+    if (dp && (dp.dx !== 0 || dp.dy !== 0)) {
+      const ghostGrid = new CanvasGrid(widthTiles, heightTiles, fx, gfx, isH);
+      for (const src of selectedItems.value) {
+        if (src.tileX < 0 || src.tileY < 0) continue;
+        const previewItem: LevelItem = {
+          ...src,
+          tileX: src.tileX + dp.dx,
+          tileY: src.tileY + dp.dy,
+        } as LevelItem;
+        renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);
+      }
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      drawCanvas(ctx, ghostGrid, palette);
+      ctx.restore();
+
+      // Outline around the new anchor(s) so the drop target is obvious.
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 2]);
+      for (const src of selectedItems.value) {
+        if (src.tileX < 0 || src.tileY < 0) continue;
+        const gx = src.tileX + dp.dx;
+        const gy = src.tileY + dp.dy;
+        ctx.strokeRect(gx * TILE_PX + 0.5, gy * TILE_PX + 0.5, TILE_PX - 1, TILE_PX - 1);
+      }
+      ctx.setLineDash([]);
     }
   }
 

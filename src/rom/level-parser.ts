@@ -209,7 +209,7 @@ function sizeOfItem(rom: Uint8Array, romOffset: number): ItemSizing {
  * Same logic as `computeItemPositions` in `level-layout.ts` but writes
  * directly onto the parsed items rather than producing a separate array.
  */
-function populateAbsolutePositions(items: LevelItem[]): void {
+function populateAbsolutePositions(items: LevelItem[], isHorizontal: boolean): void {
   let deltaX = 0;
   let deltaY = 0;
 
@@ -235,8 +235,15 @@ function populateAbsolutePositions(items: LevelItem[]): void {
           deltaY = (deltaY + 1) % 16;
           deltaX += 0x10;
         }
-        item.tileX = deltaX + ix;
-        item.tileY = deltaY;
+        // Mirrors C++ cneseditor_loader.cpp:57
+        // POINT p = { fDir ? iDeltaX + x : x , fDir ? iDeltaY : iDeltaY + 0x0f*(iDeltaX/0x10) };
+        if (isHorizontal) {
+          item.tileX = deltaX + ix;
+          item.tileY = deltaY;
+        } else {
+          item.tileX = ix;
+          item.tileY = deltaY + 0x0f * Math.floor(deltaX / 0x10);
+        }
         break;
       }
       default:
@@ -281,7 +288,7 @@ export function parseLevelBlock(
       const end = cursor + 1;
       const sourceRange: ByteRange = [romOffset, end];
       // Populate absolute tile positions from the cumulative cursor.
-      populateAbsolutePositions(items);
+      populateAbsolutePositions(items, header.direction === 1);
 
       return {
         romOffset,

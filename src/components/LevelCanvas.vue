@@ -77,11 +77,15 @@ function hitTestTile(tileX: number, tileY: number): LevelItem | null {
 function hitTestEnemy(tileX: number, tileY: number): { enemy: EnemyItem; pageIndex: number } | null {
   const eb = getEnemyBlock();
   if (!eb) return null;
+  const isH = block.value?.header.direction === 1;
   for (let pageIdx = 0; pageIdx < eb.pages.length; pageIdx++) {
     const page = eb.pages[pageIdx]!;
     for (const enemy of page.enemies) {
-      const ex = pageIdx * 16 + enemy.x;
-      const ey = enemy.y;
+      // Mirrors C++ cneseditor_loader.cpp:119-129.
+      // Horizontal: X = page*16 + local x, Y = local y.
+      // Vertical:   X = local x, Y = page*16 + local y.
+      const ex = isH ? pageIdx * 16 + enemy.x : enemy.x;
+      const ey = isH ? enemy.y : pageIdx * 16 + enemy.y;
       if (ex === tileX && ey === tileY) {
         return { enemy, pageIndex: pageIdx };
       }
@@ -740,11 +744,15 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     const enemyAtlasIdx = Math.min(fx, 2); // overworld atlas 0-2
     const enemyAtlasSrc = getAtlasImage(enemyAtlasIdx);
     if (enemyBlock && enemyAtlasSrc) {
+      const isH = b.header.direction === 1;
       for (let pageIdx = 0; pageIdx < enemyBlock.pages.length; pageIdx++) {
         const page = enemyBlock.pages[pageIdx]!;
         for (const enemy of page.enemies) {
-          const ex = (pageIdx * 16 + enemy.x) * TILE_PX;
-          const ey = enemy.y * TILE_PX;
+          // C++ cneseditor_loader.cpp:119-129 enemy position transform.
+          const absX = isH ? pageIdx * 16 + enemy.x : enemy.x;
+          const absY = isH ? enemy.y : pageIdx * 16 + enemy.y;
+          const ex = absX * TILE_PX;
+          const ey = absY * TILE_PX;
           const dim = ENEMY_DIM[enemy.id];
           const spriteId = dim?.[0];
           if (spriteId !== undefined && spriteId !== 0xff) {

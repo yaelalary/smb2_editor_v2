@@ -18,11 +18,15 @@ import type { LevelItem, LevelHeader } from './model';
 import type { NesItemDim } from './nesleveldef';
 import {
   ITEM_DIM,
-  SITEM_DIM,
   GROUND_TYPE_H,
   GROUND_TYPE_V,
 } from './nesleveldef';
-import { getBgSet, getObjTile, getWorldGfx, getHorzDim, emptyDim } from './tile-reader';
+import {
+  getBgSet, getObjTile, getWorldGfx,
+  getSingDim, getHorzDim, getVertDim, getMasvDim, getEntrDim,
+  isSingBg, isVertBg, isMasvBg, isEntrBg,
+  emptyDim,
+} from './tile-reader';
 import { getFxForSlot } from './level-layout';
 
 // ─── Public types ──────────────────────────────────────────────────
@@ -98,12 +102,20 @@ function pushTile(
 // ─── Draw functions ────────────────────────────────────────────────
 
 function renderSingle(
-  _rom: Uint8Array, itemId: number, _world: number,
-  x: number, y: number, atlas: number,
+  rom: Uint8Array, itemId: number, world: number,
+  x: number, y: number, atlas: number, gfx: number,
 ): RenderedTile[] {
-  const dim = fallbackDim(itemId);
+  // C++ DrawSingleObjectEx calls GetSingDim which reads from ROM and
+  // sets type=4 for known cases → BG atlas. Fallback → item atlas.
+  const dim = getSingDim(rom, itemId, world, fallbackDim(itemId));
   const out: RenderedTile[] = [];
-  pushTile(out, dim.topleft, x, y, atlas);
+  if (isSingBg(itemId)) {
+    pushBgTile(out, dim.topleft, x, y, gfx);
+    // Item 0x10 (big cloud) also has a topright tile.
+    if (itemId === 0x10) pushBgTile(out, dim.topright, x + 1, y, gfx);
+  } else {
+    pushTile(out, dim.topleft, x, y, atlas);
+  }
   return out;
 }
 
@@ -132,9 +144,9 @@ function renderHorizontal(
 }
 
 function renderVertical(
-  _rom: Uint8Array, rawId: number, _world: number,
+  rom: Uint8Array, rawId: number, world: number,
   posX: number, posY: number,
-  isInverted: boolean, isHorizontalLevel: boolean, atlas: number,
+  isInverted: boolean, isHorizontalLevel: boolean, atlas: number, gfx: number,
 ): RenderedTile[] {
   let id: number;
   let size: number;
@@ -147,67 +159,70 @@ function renderVertical(
     size = 0x0f * Math.floor((posY + 0x0f) / 0x0f) - posY - 1;
   }
 
-  const dim = fallbackDim(id);
+  // C++ DrawVertObjectEx calls GetVertDim: ROM tiles + type=4 for
+  // known cases (jars 6-8, vines 12-13, pillar 15, vine-top 18, tree 22).
+  const dim = getVertDim(rom, id, world, fallbackDim(id));
+  const isBg = isVertBg(id);
+  const emit = (tid: number, x: number, y: number): void => {
+    if (isBg) pushBgTile(out, tid, x, y, gfx);
+    else pushTile(out, tid, x, y, atlas);
+  };
+
   const out: RenderedTile[] = [];
 
   if (!isInverted) {
     if (id === 0x0c || id === 0x0d || id === 0x0f) size += 0x0f;
 
-    pushTile(out, dim.topleft, posX, posY, atlas);
+    emit(dim.topleft, posX, posY);
     for (let i = 1; i < size; i++) {
-      pushTile(out, dim.middle, posX, posY + i, atlas);
+      emit(dim.middle, posX, posY + i);
     }
     if (size > 0) {
-      pushTile(out, dim.bottomleft, posX, posY + size, atlas);
+      emit(dim.bottomleft, posX, posY + size);
     }
   } else {
-    pushTile(out, dim.bottomleft, posX, posY, atlas);
+    emit(dim.bottomleft, posX, posY);
     let minY = Math.max(posY - 0x0f, 0);
     if (id === 0x12 && !isHorizontalLevel && minY > 0) {
       minY = (1 + Math.floor(minY / 0x0f)) * 0x0f;
     }
     for (let cy = posY - 1; cy > minY; cy--) {
-      pushTile(out, dim.middle, posX, cy, atlas);
+      emit(dim.middle, posX, cy);
     }
-    pushTile(out, dim.topleft, posX, minY, atlas);
+    emit(dim.topleft, posX, minY);
   }
   return out;
 }
 
 function renderMassive(
-  _rom: Uint8Array, rawId: number, _world: number,
-  posX: number, posY: number, atlas: number,
-  fx?: number, objectType?: number,
+  rom: Uint8Array, rawId: number, world: number,
+  posX: number, posY: number, atlas: number, gfx: number,
 ): RenderedTile[] {
   const sizeX = rawId >= 0x30 ? ((rawId - 0x30) & 0x0f) : 5;
   const sizeY = 0x0e;
   const idRegular = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
 
-  // Use static tables (grid-compatible tile IDs).
-  // For extended mass items (vid 8,9,12), try SITEM_DIM first.
-  // For regular mass items (24,25), use ITEM_DIM which has all 8 positions.
-  let dim: NesItemDim;
-  if (rawId >= 0x30 && fx !== undefined && objectType !== undefined) {
-    const extDim = SITEM_DIM[fx]?.[objectType]?.[idRegular];
-    dim = extDim ? {
-      topleft: extDim[0] ?? 0xff, top: extDim[1] ?? 0xff, topright: extDim[2] ?? 0xff,
-      left: extDim[3] ?? 0xff, right: extDim[4] ?? 0xff, middle: extDim[5] ?? 0xff,
-      bottomleft: extDim[6] ?? 0xff, bottomright: extDim[7] ?? 0xff,
-    } : fallbackDim(idRegular);
-  } else {
-    dim = fallbackDim(idRegular);
-  }
+  // C++ DrawMasvObjectEx calls GetMasvDim: ROM tiles + type=4 for known
+  // cases (0x08, 0x09, 0x0C vid items, 0x18/0x19 bricks). Covers
+  // waterfall, green platform, brick background/wall.
+  const dim = getMasvDim(rom, idRegular, world, fallbackDim(idRegular));
+  const isBg = isMasvBg(idRegular);
+  const emit = (tid: number, x: number, y: number): void => {
+    if (isBg) pushBgTile(out, tid, x, y, gfx);
+    else pushTile(out, tid, x, y, atlas);
+  };
+
   const out: RenderedTile[] = [];
 
-  pushTile(out, dim.topleft, posX, posY, atlas);
-  pushTile(out, dim.topright, posX + sizeX, posY, atlas);
+  emit(dim.topleft, posX, posY);
+  emit(dim.topright, posX + sizeX, posY);
   for (let cx = 1; cx < sizeX; cx++) {
-    pushTile(out, dim.top, posX + cx, posY, atlas);
+    emit(dim.top, posX + cx, posY);
   }
   for (let cy = 1; cy <= sizeY; cy++) {
     for (let cx = 0; cx <= sizeX; cx++) {
       const tid = cx === 0 ? dim.left : (cx < sizeX ? dim.middle : dim.right);
-      pushTile(out, tid, posX + cx, posY + cy, atlas);
+      emit(tid, posX + cx, posY + cy);
     }
   }
   return out;
@@ -270,53 +285,62 @@ function renderVertGround(
 }
 
 function renderSpecialRegular(
-  _rom: Uint8Array, rawId: number, _world: number,
-  posX: number, posY: number, atlas: number,
+  rom: Uint8Array, rawId: number, world: number,
+  posX: number, posY: number, atlas: number, gfx: number,
 ): RenderedTile[] {
   const out: RenderedTile[] = [];
   switch (rawId) {
-    case 14: pushTile(out, 0xfe, posX, posY, atlas); break;
+    case 14: pushTile(out, 0xfe, posX, posY, atlas); break; // star bg sentinel
     case 16: {
-      const dim = fallbackDim(rawId);
-      pushTile(out, dim.topleft, posX, posY, atlas);
-      pushTile(out, dim.topright, posX + 1, posY, atlas);
+      // Big cloud: GetSingDim reads from ROM + type=4 → BG atlas.
+      const dim = getSingDim(rom, rawId, world, fallbackDim(rawId));
+      pushBgTile(out, dim.topleft, posX, posY, gfx);
+      pushBgTile(out, dim.topright, posX + 1, posY, gfx);
       break;
     }
-    case 23: pushTile(out, 0xfb, posX, posY, atlas); break;
+    case 23: pushTile(out, 0xfb, posX, posY, atlas); break; // pyramid sentinel
     case 30: case 31:
-      pushTile(out, rawId === 30 ? 0xfc : 0xfd, posX, posY, atlas);
+      pushTile(out, rawId === 30 ? 0xfc : 0xfd, posX, posY, atlas); // desert/red bg sentinel
       break;
   }
   return out;
 }
 
 function renderEntrance(
-  _rom: Uint8Array, rawId: number, _world: number,
-  posX: number, posY: number, atlas: number,
+  rom: Uint8Array, rawId: number, world: number,
+  posX: number, posY: number, atlas: number, gfx: number,
 ): RenderedTile[] {
-  const dim = fallbackDim(rawId);
+  // C++ DrawSpecialObjectEx (entrance branch) calls GetEntrDim: ROM +
+  // type=4 for doors (9-11, 28-29) and light entrances (19, 20).
+  const dim = getEntrDim(rom, rawId, world, fallbackDim(rawId));
+  const isBg = isEntrBg(rawId);
+  const emit = (tid: number, x: number, y: number): void => {
+    if (isBg) pushBgTile(out, tid, x, y, gfx);
+    else pushTile(out, tid, x, y, atlas);
+  };
+
   const out: RenderedTile[] = [];
   switch (rawId) {
     case 9: case 10: case 11: case 28: case 29:
-      pushTile(out, dim.topleft, posX, posY, atlas);
-      pushTile(out, dim.bottomleft, posX, posY + 1, atlas);
+      emit(dim.topleft, posX, posY);
+      emit(dim.bottomleft, posX, posY + 1);
       break;
     case 19:
-      pushTile(out, dim.topleft, posX, posY, atlas);
-      pushTile(out, dim.bottomleft, posX, posY + 1, atlas);
-      pushTile(out, dim.top, posX + 1, posY, atlas);
-      pushTile(out, dim.middle, posX + 1, posY + 1, atlas);
-      pushTile(out, dim.bottomright, posX + 2, posY + 1, atlas);
+      emit(dim.topleft, posX, posY);
+      emit(dim.bottomleft, posX, posY + 1);
+      emit(dim.top, posX + 1, posY);
+      emit(dim.middle, posX + 1, posY + 1);
+      emit(dim.bottomright, posX + 2, posY + 1);
       break;
     case 20:
-      pushTile(out, dim.bottomleft, posX - 2, posY + 1, atlas);
-      pushTile(out, dim.top, posX - 1, posY, atlas);
-      pushTile(out, dim.middle, posX - 1, posY + 1, atlas);
-      pushTile(out, dim.topright, posX, posY, atlas);
-      pushTile(out, dim.bottomright, posX, posY + 1, atlas);
+      emit(dim.bottomleft, posX - 2, posY + 1);
+      emit(dim.top, posX - 1, posY);
+      emit(dim.middle, posX - 1, posY + 1);
+      emit(dim.topright, posX, posY);
+      emit(dim.bottomright, posX, posY + 1);
       break;
     case 21: case 30:
-      pushTile(out, 0xfc, posX, posY, atlas);
+      pushTile(out, 0xfc, posX, posY, atlas); // desert entrance sentinel
       break;
   }
   return out;
@@ -348,25 +372,25 @@ export function renderItem(
   const objType = header.objectType & 0x0f;
 
   if (item.kind === 'entrance') {
-    return renderEntrance(rom, rawId, world, item.tileX, item.tileY, atlas);
+    return renderEntrance(rom, rawId, world, item.tileX, item.tileY, atlas, gfx);
   }
   if (item.kind !== 'regular') return [];
 
   // ─── Regular item dispatch (mirrors DrawObjectEx switch) ────────
   switch (rawId) {
     case 6: case 7: case 8: case 12: case 13: case 15: case 22:
-      return renderVertical(rom, rawId, world, item.tileX, item.tileY, false, isH, atlas);
+      return renderVertical(rom, rawId, world, item.tileX, item.tileY, false, isH, atlas, gfx);
     case 18:
-      return renderVertical(rom, rawId, world, item.tileX, item.tileY, true, isH, atlas);
+      return renderVertical(rom, rawId, world, item.tileX, item.tileY, true, isH, atlas, gfx);
     case 0: case 1: case 2: case 3: case 4: case 5: case 17:
     case 32: case 33: case 34: case 35: case 36: case 37:
     case 38: case 39: case 40: case 41: case 42: case 43:
     case 44: case 45: case 46: case 47:
-      return renderSingle(rom, rawId, world, item.tileX, item.tileY, atlas);
+      return renderSingle(rom, rawId, world, item.tileX, item.tileY, atlas, gfx);
     case 24: case 25:
-      return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas);
+      return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, gfx);
     case 14: case 16: case 23: case 30: case 31:
-      return renderSpecialRegular(rom, rawId, world, item.tileX, item.tileY, atlas);
+      return renderSpecialRegular(rom, rawId, world, item.tileX, item.tileY, atlas, gfx);
     default: {
       if (rawId < 0x30) return [];
       const vid = Math.floor((rawId - 0x30) / 0x10);
@@ -381,7 +405,7 @@ export function renderItem(
         case 10: case 11:
           return renderHorizontal(rom, rawId, world, gfx, item.tileX, item.tileY);
         case 8: case 9: case 12:
-          return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, fx, header.objectType);
+          return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, gfx);
         default: return [];
       }
     }

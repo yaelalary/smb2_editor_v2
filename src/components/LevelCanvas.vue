@@ -16,7 +16,7 @@ import { levelDimensions, ITEM_COLORS, getFxForSlot } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
-import { getBgSet, getBgTile, getWorldGfx } from '@/rom/tile-reader';
+import { getBgSet, getBgTile, getWorldGfx, getBPriority } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
@@ -274,32 +274,30 @@ function onMouseUp(e: MouseEvent): void {
   } else {
     // Plain click: single select
     selectedItems.value = hit ? [hit] : [];
-    // ─── DEBUG: log selected item info ────────────────────────────
     if (hit) {
       const romData = rom.romData;
       const b = block.value;
       if (romData && b) {
-        const world = Math.floor(rom.activeSlot / 30);
-        const isH = b.header.direction === 1;
         const rawId = hit.itemId;
         const vid = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : null;
-        const size = rawId >= 0x30 ? rawId & 0x0f : null;
         const tiles = renderItem(romData.rom, hit, rom.activeSlot, b.header);
+        const itemIdx = b.items.indexOf(hit);
+        let layer = 0;
+        for (let i = 0; i < itemIdx; i++) {
+          if (b.items[i]?.kind === 'backToStart') layer++;
+        }
         // eslint-disable-next-line no-console
         console.log('[ITEM CLICKED]', {
-          kind: hit.kind,
           rawId: '0x' + rawId.toString(16),
-          vid, size,
-          tileX: hit.tileX, tileY: hit.tileY,
-          world, isH,
-          objectType: b.header.objectType,
-          sourceBytes: hit.sourceBytes.map((b) => '0x' + b.toString(16)),
-          tilesReturned: tiles.map((t) => ({
-            tileId: '0x' + t.tileId.toString(16),
-            atlasIndex: t.atlasIndex,
-            isBgStrip: t.isBgStrip ?? false,
-            x: t.x, y: t.y,
-          })),
+          vid,
+          size: rawId >= 0x30 ? rawId & 0x0f : null,
+          pos: `(${hit.tileX}, ${hit.tileY})`,
+          layer,
+          tileCount: tiles.length,
+          tilesYRange: tiles.length > 0
+            ? `y=${Math.min(...tiles.map((t) => t.y))} to ${Math.max(...tiles.map((t) => t.y))}`
+            : 'none',
+          firstTile: tiles[0] ? { tileId: '0x' + tiles[0].tileId.toString(16), atlas: tiles[0].atlasIndex, isBg: tiles[0].isBgStrip } : null,
         });
       }
     }
@@ -731,9 +729,14 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   const groundGrid = drawGround(ctx, b, widthTiles, heightTiles, palette, segments);
 
   // Items — full multi-tile rendering ported from C++ Draw*ObjectEx.
-  // Items extend to full size; drawItemOnCanvas applies the ground filter
-  // for bgPriority=1 items.
-  for (const item of b.items) {
+  // Sort by bPriority DESCENDING: high values (back) drawn first, low
+  // values (front) drawn last. Mirrors C++ SetCanvasItem priority check
+  // (existing.bPriority < new.bPriority → reject new). Stable sort via
+  // a stable key preserves stream order within equal priorities.
+  const sortedItems = b.items
+    .map((item, streamIdx) => ({ item, streamIdx, pri: getBPriority(item.itemId) }))
+    .sort((a, b) => (b.pri - a.pri) || (a.streamIdx - b.streamIdx));
+  for (const { item } of sortedItems) {
     drawItemOnCanvas(ctx, item, selectedItems.value.includes(item), palette, groundGrid);
   }
 

@@ -376,6 +376,103 @@ export function getBgTile(
   return rd(rom, ptr + 4 * bgType + bgSet);
 }
 
+// ─── Item bPriority (draw order) ───────────────────────────────────
+//
+// C++ g_mPriorityList[].bPriority from nesleveldef.cpp:1317. Lower
+// value = higher visual priority (drawn on top). SetCanvasItem rejects
+// new tiles when `existing.bPriority < new.bPriority`. We emulate this
+// by sorting items bPriority-descending before drawing: high values
+// drawn first (back), low values drawn last (front).
+const B_PRIORITY_REGULAR: ReadonlyArray<number> = [
+  // 0-5
+  0, 0, 0, 3, 0, 0,
+  // 6-11 (jars, vines, doors)
+  0, 0, 0, 0, 0, 0,
+  // 12-17 (vines, clouds)
+  3, 3, 3, 3, 1, 1,
+  // 18-23 (vine-top, entrances, tree, pyramid)
+  3, 0, 0, 0, 5, 3,
+  // 24-29 (bricks, veggie thrower, ???, bricks)
+  3, 3, 3, 0, 0, 0,
+  // 30-35 (mouth, red bg, herbs...)
+  0, 3, 0, 0, 0, 0,
+  // 36-41
+  0, 0, 0, 0, 0, 0,
+  // 42-47
+  0, 0, 0, 0, 0, 0,
+];
+
+/**
+ * Canonical priority index for extended items (rawId >= 0x30):
+ * CONVERT_REGULAR(r) = 0x30 + (r - 0x30) / 0x10 → maps to indices 48-60.
+ */
+const B_PRIORITY_EXTENDED: ReadonlyArray<number> = [
+  // 48-52 (X-blocks, herbs, bridge, spikes)
+  0, 0, 0, 0, 0,
+  // 53-55 (column bombable, column brick, ladder)
+  4, 4, 0,
+  // 56-60 (whale, green platform, red wood, cloud platform, waterfall)
+  0, 4, 0, 0, 4,
+];
+
+/**
+ * bPriority for an item rawId. Lower value = more in front.
+ * Items not in the C++ table default to 0 (highest priority).
+ */
+export function getBPriority(rawId: number): number {
+  if (rawId < 0x30) return B_PRIORITY_REGULAR[rawId] ?? 0;
+  const idx = Math.floor((rawId - 0x30) / 0x10); // 0-15
+  return B_PRIORITY_EXTENDED[idx] ?? 0;
+}
+
+// ─── Is-BG-Atlas helpers (type=4 check ports) ──────────────────────
+//
+// In C++, each Get*Dim function sets `type = 4` only when a switch case
+// matches (ROM lookup happens). Default cases leave type=0 (item atlas).
+// DrawCanvas then routes type!=0 → DrawGrGamma (BG atlas) vs type=0 →
+// DrawGamma (item atlas). These helpers encode the matching cases so
+// the web renderers can make the same atlas decision.
+
+/** C++ GetSingDim cases that set type=4 (BG atlas). */
+export function isSingBg(itemId: number): boolean {
+  if (itemId >= 0x00 && itemId <= 0x05) return true;
+  if (itemId === 0x10 || itemId === 0x11) return true;
+  // 0x20-0x2F except 0x2B and 0x2D (commented out in C++)
+  if (itemId >= 0x20 && itemId <= 0x2f && itemId !== 0x2b && itemId !== 0x2d) return true;
+  return false;
+}
+
+/** C++ GetHorzDim cases that set type=4. */
+export function isHorzBg(itemId: number): boolean {
+  return itemId === 0x0a || itemId === 0x0b;
+}
+
+/** C++ GetVertDim cases that set type=4. */
+export function isVertBg(itemId: number): boolean {
+  if (itemId >= 0x06 && itemId <= 0x08) return true;
+  if (itemId === 0x0c || itemId === 0x0d) return true;
+  if (itemId === 0x0f) return true;
+  if (itemId === 0x12) return true;
+  if (itemId === 0x16) return true;
+  return false;
+}
+
+/** C++ GetMasvDim cases that set type=4. */
+export function isMasvBg(itemId: number): boolean {
+  if (itemId === 0x08 || itemId === 0x09) return true;
+  if (itemId === 0x0c) return true;
+  if (itemId === 0x18 || itemId === 0x19) return true;
+  return false;
+}
+
+/** C++ GetEntrDim cases that set type=4. */
+export function isEntrBg(itemId: number): boolean {
+  if (itemId >= 9 && itemId <= 11) return true;
+  if (itemId === 19 || itemId === 20) return true;
+  if (itemId === 28 || itemId === 29) return true;
+  return false;
+}
+
 // ─── GetFX (world gfx theme index) ─────────────────────────────────
 
 /**

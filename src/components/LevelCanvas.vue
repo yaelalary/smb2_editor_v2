@@ -82,8 +82,9 @@ function hitTestEnemy(tileX: number, tileY: number): { enemy: EnemyItem; pageInd
       // Mirrors C++ cneseditor_loader.cpp:119-129.
       const ex = isH ? pageIdx * 16 + enemy.x : enemy.x;
       const ey = isH ? enemy.y : pageIdx * 16 + enemy.y;
-      // Consider the full multi-tile footprint (cx × cy).
-      const szxy = ENEMY_DIM[enemy.id]?.[1] ?? 0xff;
+      // Consider the full multi-tile footprint (cx × cy). Mask bit 7
+      // (hidden-enemy flag) per C++ CNesItem::Enemy() `id & 0x7f`.
+      const szxy = ENEMY_DIM[enemy.id & 0x7f]?.[1] ?? 0xff;
       const cx = szxy === 0xff ? 1 : Math.max(1, szxy & 0x0f);
       const cy = szxy === 0xff ? 1 : Math.max(1, (szxy >> 4) & 0x0f);
       if (tileX >= ex && tileX < ex + cx && tileY >= ey && tileY < ey + cy) {
@@ -437,7 +438,12 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
           const absY = isH ? enemy.y : pageIdx * 16 + enemy.y;
           const ex = absX * TILE_PX;
           const ey = absY * TILE_PX;
-          const dim = ENEMY_DIM[enemy.id];
+          // C++ CNesItem::Enemy() returns `id & 0x7f` — bit 7 is the
+          // "hidden enemy" flag (spawn-from-jar). Strip it before the
+          // sprite lookup so bosses stored as 0x80|id (e.g. Wart = 0xAC,
+          // Mouser, Clawglip, Triclyde) still find their ENEMY_DIM entry.
+          const lookupId = enemy.id & 0x7f;
+          const dim = ENEMY_DIM[lookupId];
           const spriteId = dim?.[0];
           const szxy = dim?.[1] ?? 0xff;
           const cx = szxy === 0xff ? 0 : (szxy & 0x0f);

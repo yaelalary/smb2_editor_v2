@@ -695,6 +695,52 @@ export const ENEMY_DIM: readonly (readonly [number, number])[] = [
   [0x0b, 0x11], // 72  Beezo attack
   [0x30, 0x11], // 73  Stop attack
   [0x30, 0x11], // 74  Vegetable throw
+  // Indices 75-91: "Not used" in the C++ table. Kept as 0xFF padding so
+  // a lookup at these IDs cleanly falls through to the fallback branch.
+  [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], // 75-79
+  [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], // 80-84
+  [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], [0xff, 0xff], // 85-89
+  [0xff, 0xff], [0xff, 0xff],                                           // 90-91
+  // Indices 92-127: the C++ table verbatim repeats indices 28-63 here.
+  // SMB2 uses these higher IDs to encode the same sprites with a
+  // different enemy-flag pattern (bit 6 = boss / scripted variant).
+  // Any change upstream to 28-63 MUST be mirrored here.
+  [0x17, 0x21], // 92  (= 28 Birdo)
+  [0x18, 0x22], // 93  (= 29 Mouser)
+  [0x33, 0x11], // 94  (= 30 Stray egg)
+  [0x71, 0x32], // 95  (= 31 Triclyde)
+  [0x35, 0x11], // 96  (= 32 Stray fireball)
+  [0x49, 0x22], // 97  (= 33 Clawglip)
+  [0x1f, 0x11], // 98  (= 34 Stray rock)
+  [0x34, 0x11], // 99  (= 35 Panser red)
+  [0x36, 0x11], // 100 (= 36 Panser pink)
+  [0x37, 0x11], // 101 (= 37 Panser grey)
+  [0x63, 0x21], // 102 (= 38 Autobomb)
+  [0x3f, 0x11], // 103 (= 39 Autobomb fireball)
+  [0x64, 0x11], // 104 (= 40 Whale spout)
+  [0x62, 0x11], // 105 (= 41 Flurry)
+  [0x1c, 0x33], // 106 (= 42 Fryguy)
+  [0x1b, 0x11], // 107 (= 43 Little fryguy)
+  [0x4b, 0x33], // 108 (= 44 Wart)
+  [0x40, 0x31], // 109 (= 45 Hawkmouth alive)
+  [0x38, 0x11], // 110 (= 46 Spark 1)
+  [0x38, 0x11], // 111 (= 47 Spark 2)
+  [0x38, 0x11], // 112 (= 48 Spark 3)
+  [0x38, 0x11], // 113 (= 49 Spark 4)
+  [0x41, 0x11], // 114 (= 50 Small vegetable)
+  [0x42, 0x11], // 115 (= 51 Fresh vegetable)
+  [0x41, 0x11], // 116 (= 52 Vegetable thrower)
+  [0x43, 0x11], // 117 (= 53 Turtle shell)
+  [0x44, 0x11], // 118 (= 54 Coin)
+  [0x3f, 0x11], // 119 (= 55 Bomb explodes)
+  [0x30, 0x11], // 120 (= 56 Rocket — note C++ duplicate uses 0x30,0x11 not 0xff,0xff)
+  [0x44, 0x11], // 121 (= 57 Mushroom block weird)
+  [0x45, 0x11], // 122 (= 58 POW block)
+  [0x47, 0x12], // 123 (= 59 Rolling red beam)
+  [0x51, 0x21], // 124 (= 60 Door sub-space)
+  [0x52, 0x11], // 125 (= 61 Key)
+  [0x53, 0x11], // 126 (= 62 Potion)
+  [0x54, 0x11], // 127 (= 63 Mushroom)
 ];
 
 export const ENEMY_NAMES: readonly string[] = [

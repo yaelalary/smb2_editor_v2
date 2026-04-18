@@ -274,33 +274,6 @@ function onMouseUp(e: MouseEvent): void {
   } else {
     // Plain click: single select
     selectedItems.value = hit ? [hit] : [];
-    if (hit) {
-      const romData = rom.romData;
-      const b = block.value;
-      if (romData && b) {
-        const rawId = hit.itemId;
-        const vid = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : null;
-        const tiles = renderItem(romData.rom, hit, rom.activeSlot, b.header);
-        const itemIdx = b.items.indexOf(hit);
-        let layer = 0;
-        for (let i = 0; i < itemIdx; i++) {
-          if (b.items[i]?.kind === 'backToStart') layer++;
-        }
-        // eslint-disable-next-line no-console
-        console.log('[ITEM CLICKED]', {
-          rawId: '0x' + rawId.toString(16),
-          vid,
-          size: rawId >= 0x30 ? rawId & 0x0f : null,
-          pos: `(${hit.tileX}, ${hit.tileY})`,
-          layer,
-          tileCount: tiles.length,
-          tilesYRange: tiles.length > 0
-            ? `y=${Math.min(...tiles.map((t) => t.y))} to ${Math.max(...tiles.map((t) => t.y))}`
-            : 'none',
-          firstTile: tiles[0] ? { tileId: '0x' + tiles[0].tileId.toString(16), atlas: tiles[0].atlasIndex, isBg: tiles[0].isBgStrip } : null,
-        });
-      }
-    }
   }
   selectedEnemy.value = null;
   mouseDownPos = null;

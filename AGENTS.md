@@ -10,6 +10,26 @@ question whether it belongs here at all.
 
 ---
 
+## CRITICAL: C++ reference tool is the source of truth
+
+This project is a **faithful port** of `loginsinex/smb2` (cloned at
+`C:/Users/Yael/Documents/Dev/Web/smb2/smb2/`). For ALL rendering,
+parsing, and serialization logic:
+
+1. **Read the C++ first, code second.** Open the corresponding `.cpp`
+   file and read the actual function before writing any TypeScript.
+2. **Port line by line.** Same formulas, same constants, same control
+   flow. If the C++ does `cx = iDeltaX + 8*(Reserved & 0x0F)`, do
+   exactly that — don't "simplify" or "improve".
+3. **Never invent alternatives.** No "simpler approach", no "we can
+   do it differently". If the C++ has an algorithm, port it.
+4. **When something breaks**, re-read the C++ to find what was
+   mis-ported. Don't add workarounds.
+5. **UX improvements are fine** (drag-and-drop, undo/redo, auto-save,
+   clearer labels) — they don't change ROM logic.
+
+---
+
 ## Language and file conventions
 
 - **Everything is TypeScript.** Strict mode, `noUncheckedIndexedAccess`

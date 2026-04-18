@@ -15,11 +15,12 @@ import { useEditorStore } from '@/stores/editor';
 import { levelDimensions, ITEM_COLORS, getFxForSlot } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
-import { ENEMY_DIM } from '@/rom/nesleveldef';
+import { ENEMY_DIM, GROUND_TYPE_H, GROUND_TYPE_V } from '@/rom/nesleveldef';
+import { getBgSet } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
-import { renderItem, renderGround } from '@/rom/item-renderer';
+import { renderItem } from '@/rom/item-renderer';
 import type { RenderedTile } from '@/rom/item-renderer';
 import {
   getAtlasImage,
@@ -338,6 +339,19 @@ function blitTile(
  * Uses renderGround() which reads tile IDs from ROM per-world,
  * matching the C++ DrawGroundEx.
  */
+/**
+ * Draw ground for the entire level, processing groundSet items from
+ * the stream to handle holes, waterfalls, and terrain changes.
+ *
+ * Mirrors C++ DrawLevelEx / DrawGroundEx exactly:
+ *   1. Build a 2D grid (width × height) where each cell is either a
+ *      tile ID or null (no ground).
+ *   2. Process ground items in order. Each groundSet item writes its
+ *      bitmask pattern from its X position to the end of the canvas,
+ *      overriding what was there before (including clearing cells
+ *      where bitset=0 — this creates holes).
+ *   3. Draw the grid once.
+ */
 function drawGround(
   ctx: CanvasRenderingContext2D,
   b: LevelBlock,
@@ -347,13 +361,131 @@ function drawGround(
 ): void {
   const romData = rom.romData;
   if (!romData) return;
+  const isH = b.header.direction === 1;
+  const fx = getFxForSlot(rom.activeSlot);
+  const groundAtlas = fx + 4;
+  const gtTable = isH ? GROUND_TYPE_H : GROUND_TYPE_V;
 
-  const tiles = renderGround(
-    romData.rom, rom.activeSlot, b.header,
-    widthTiles, heightTiles,
-    b.header.groundSet, b.header.groundType, 0, 0,
+  // Ground grid: null = no tile, number = tile ID.
+  const grid: (number | null)[][] = Array.from(
+    { length: widthTiles },
+    () => new Array<number | null>(heightTiles).fill(null),
   );
-  for (const t of tiles) blitTile(ctx, t, palette);
+
+  // Collect ground segments from the item stream.
+  interface GroundSeg { startPos: number; groundSet: number; groundType: number }
+  const segments: GroundSeg[] = [];
+
+  let currentGroundType = b.header.groundType;
+  // Default from header (item index "0" in C++ terminology)
+  segments.push({ startPos: 0, groundSet: b.header.groundSet, groundType: currentGroundType });
+
+  // Walk items tracking cursor to find groundSet item positions.
+  // C++ uses iLastGrSetX to ensure monotonically increasing positions.
+  let deltaX = 0;
+  let deltaY = 0;
+  let lastGroundPos = 0;
+  for (const item of b.items) {
+    switch (item.kind) {
+      case 'skipper': {
+        const lowNibble = (item.sourceBytes[0] ?? 0) & 0x0f;
+        deltaX += (lowNibble - 1) * 0x10;
+        break;
+      }
+      case 'backToStart':
+        deltaX = 0;
+        deltaY = 0;
+        break;
+      case 'regular':
+      case 'entrance': {
+        const byte0 = item.sourceBytes[0] ?? 0;
+        const iy = (byte0 >> 4) & 0x0f;
+        deltaY += iy;
+        if (deltaY >= 0x0f) {
+          deltaY = (deltaY + 1) % 16;
+          deltaX += 0x10;
+        }
+        break;
+      }
+      case 'groundSet': {
+        const byte0 = item.sourceBytes[0] ?? 0;
+        const byte1 = item.sourceBytes[1] ?? 0;
+        const gSet = byte1 & 0x1f;
+        const reserved = byte0 & 0x0f; // 0 for 0xF0, 1 for 0xF1
+
+        // C++ position formula from cneseditor_loader.cpp:73-93
+        let pos: number;
+        if (isH) {
+          pos = deltaX + 8 * reserved + Math.floor(byte1 / 0x20);
+          if (pos <= lastGroundPos) pos = lastGroundPos + 1;
+        } else {
+          pos = 0x0f * Math.floor(deltaX / 0x10) + 8 * reserved + Math.floor(byte1 / 0x20);
+          if (pos <= lastGroundPos) pos = lastGroundPos + 1;
+        }
+        lastGroundPos = pos;
+
+        segments.push({ startPos: pos, groundSet: gSet, groundType: currentGroundType });
+        break;
+      }
+      case 'groundType':
+        currentGroundType = (item.sourceBytes[1] ?? 0) & 0x07;
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Process each segment: write bitmask pattern from startPos to end.
+  // Later segments override earlier ones, including clearing (null).
+  for (const seg of segments) {
+    const gSetIdx = seg.groundSet & 0x1f;
+    if (gSetIdx === 0x1f) continue; // skip 0x1F background marker
+
+    const dwGroundSet = getBgSet(romData.rom, gSetIdx, isH);
+    const gtEntry = gtTable[fx]?.[seg.groundType & 0x07];
+
+    if (isH) {
+      // Horizontal: iterate columns from startPos to end, rows 0-14
+      for (let cx = seg.startPos; cx < widthTiles; cx++) {
+        let bit = 30;
+        for (let cy = 0; cy < heightTiles; cy++) {
+          const bitset = (dwGroundSet >>> bit) & 0x03;
+          if (bitset === 0) {
+            grid[cx]![cy] = null; // Clear = hole
+          } else {
+            const tileId = gtEntry?.[bitset];
+            grid[cx]![cy] = (tileId !== undefined && tileId !== 0xff) ? tileId : null;
+          }
+          bit -= 2;
+        }
+      }
+    } else {
+      // Vertical: iterate rows from startPos to end, columns 0-15
+      for (let cy = seg.startPos; cy < heightTiles; cy++) {
+        let bit = 30;
+        for (let cx = 0; cx < widthTiles; cx++) {
+          const bitset = (dwGroundSet >>> bit) & 0x03;
+          if (bitset === 0) {
+            grid[cx]![cy] = null;
+          } else {
+            const tileId = gtEntry?.[bitset];
+            grid[cx]![cy] = (tileId !== undefined && tileId !== 0xff) ? tileId : null;
+          }
+          bit -= 2;
+        }
+      }
+    }
+  }
+
+  // Draw the grid.
+  for (let cx = 0; cx < widthTiles; cx++) {
+    for (let cy = 0; cy < heightTiles; cy++) {
+      const tileId = grid[cx]![cy];
+      if (tileId !== null) {
+        blitTile(ctx, { tileId, atlasIndex: groundAtlas, x: cx, y: cy }, palette);
+      }
+    }
+  }
 }
 
 /**

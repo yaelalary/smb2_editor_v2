@@ -526,8 +526,12 @@ export const LAYER_LIMITING: readonly number[] = [
 
 /**
  * Each entry: [spriteId, sizeNibbles].
- *   spriteId = metatile index in enemy atlas (atlas-8).
- *   sizeNibbles = (widthTiles << 4) | heightTiles. 0xFF = not renderable.
+ *   spriteId = base metatile index in enemy atlas (atlas-8).
+ *   sizeNibbles = (cy << 4) | cx — high nibble=height, low nibble=width.
+ *   0xFF = not renderable.
+ *
+ * Mirrors C++ g_mEnemyDim[].szxy; SetCanvasEnemyItem expands to a
+ * cx×cy grid where tile(ix, iy) = spriteId + (ix | (iy << 4)).
  */
 export const ENEMY_DIM: readonly (readonly [number, number])[] = [
   [0x03, 0x11], //  0  Heart

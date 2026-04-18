@@ -82,11 +82,13 @@ function hitTestEnemy(tileX: number, tileY: number): { enemy: EnemyItem; pageInd
     const page = eb.pages[pageIdx]!;
     for (const enemy of page.enemies) {
       // Mirrors C++ cneseditor_loader.cpp:119-129.
-      // Horizontal: X = page*16 + local x, Y = local y.
-      // Vertical:   X = local x, Y = page*16 + local y.
       const ex = isH ? pageIdx * 16 + enemy.x : enemy.x;
       const ey = isH ? enemy.y : pageIdx * 16 + enemy.y;
-      if (ex === tileX && ey === tileY) {
+      // Consider the full multi-tile footprint (cx × cy).
+      const szxy = ENEMY_DIM[enemy.id]?.[1] ?? 0xff;
+      const cx = szxy === 0xff ? 1 : Math.max(1, szxy & 0x0f);
+      const cy = szxy === 0xff ? 1 : Math.max(1, (szxy >> 4) & 0x0f);
+      if (tileX >= ex && tileX < ex + cx && tileY >= ey && tileY < ey + cy) {
         return { enemy, pageIndex: pageIdx };
       }
     }
@@ -755,18 +757,33 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
           const ey = absY * TILE_PX;
           const dim = ENEMY_DIM[enemy.id];
           const spriteId = dim?.[0];
-          if (spriteId !== undefined && spriteId !== 0xff) {
-            const { sx, sy } = metatileRect(spriteId);
-            ctx.drawImage(enemyAtlasSrc, sx, sy, METATILE_SIZE, METATILE_SIZE, ex, ey, TILE_PX, TILE_PX);
+          const szxy = dim?.[1] ?? 0xff;
+          const cx = szxy === 0xff ? 0 : (szxy & 0x0f);
+          const cy = szxy === 0xff ? 0 : ((szxy >> 4) & 0x0f);
+          if (spriteId !== undefined && szxy !== 0xff && cx > 0 && cy > 0) {
+            // C++ SetCanvasEnemyItem: expand into cx × cy tiles,
+            // each tile = baseSpriteId + (ix | (iy << 4)).
+            for (let iy = 0; iy < cy; iy++) {
+              for (let ix = 0; ix < cx; ix++) {
+                const tid = spriteId + (ix | (iy << 4));
+                const { sx, sy } = metatileRect(tid);
+                ctx.drawImage(
+                  enemyAtlasSrc, sx, sy, METATILE_SIZE, METATILE_SIZE,
+                  ex + ix * TILE_PX, ey + iy * TILE_PX, TILE_PX, TILE_PX,
+                );
+              }
+            }
           } else {
             ctx.fillStyle = 'rgba(255,80,80,0.6)';
             ctx.fillRect(ex + 1, ey + 1, TILE_PX - 2, TILE_PX - 2);
           }
-          // Selection ring for enemies.
+          // Selection ring covers the full enemy footprint.
           if (selectedEnemy.value?.enemy === enemy) {
+            const w = cx > 0 ? cx * TILE_PX : TILE_PX;
+            const h = cy > 0 ? cy * TILE_PX : TILE_PX;
             ctx.strokeStyle = '#ff4444';
             ctx.lineWidth = 2;
-            ctx.strokeRect(ex, ey, TILE_PX, TILE_PX);
+            ctx.strokeRect(ex, ey, w, h);
           }
         }
       }

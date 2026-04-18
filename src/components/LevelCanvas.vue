@@ -272,8 +272,117 @@ function onMouseUp(e: MouseEvent): void {
       }
     }
   } else {
-    // Plain click: single select
+    // Plain click: single select OR log ground cell if no item hit
     selectedItems.value = hit ? [hit] : [];
+    const romData = rom.romData;
+    const b = block.value;
+    if (romData && b) {
+      if (hit) {
+        const rawId = hit.itemId;
+        const vid = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : null;
+        const tiles = renderItem(romData.rom, hit, rom.activeSlot, b.header);
+        const bpri = getBPriority(rawId);
+        // Dump all groundSet items with their raw bytes so we can verify
+        // the parser got them all and compute positions correctly.
+        const allGroundSets = b.items
+          .map((it, idx) => ({ it, idx }))
+          .filter(({ it }) => it.kind === 'groundSet')
+          .map(({ it, idx }) => ({
+            idx,
+            bytes: Array.from(it.sourceBytes).map((b) => '0x' + b.toString(16).padStart(2, '0')).join(' '),
+          }));
+        console.log('[ALL GROUND SETS IN STREAM]', allGroundSets);
+        console.log('[ALL ITEM KINDS]', b.items.map((it) => it.kind));
+        // Also check the ground cell at the clicked position (hidden by item).
+        const segments = computeGroundSegments(b);
+        const { widthTiles, heightTiles } = levelDimensions(b);
+        const tmpCanvas = document.createElement('canvas');
+        const tmpCtx = tmpCanvas.getContext('2d');
+        let groundUnderItem: unknown = 'unknown';
+        if (tmpCtx && upPos) {
+          const grid = drawGround(tmpCtx, b, widthTiles, heightTiles, null, segments);
+          const cell = grid[upPos.x]?.[upPos.y];
+          const isH = b.header.direction === 1;
+          const col = isH ? upPos.x : upPos.y;
+          let applied = segments[0]!;
+          for (const seg of segments) {
+            if (seg.startPos <= col) applied = seg;
+            else break;
+          }
+          // Dump the full column for the clicked x — see what ground looks like top-to-bottom.
+          const colCells: string[] = [];
+          for (let y = 0; y < Math.min(heightTiles, 15); y++) {
+            const c = grid[upPos.x]?.[y];
+            colCells.push(c?.solid ? `y${y}:${c.tileId !== null ? '0x' + c.tileId.toString(16) : 'invis'}` : `y${y}:HOLE`);
+          }
+          // Also dump the raw groundSet bitmask (32 bits = 16 row pairs).
+          const dwGs = getBgSet(romData.rom, applied.groundSet & 0x1f, isH);
+          const bitmaskRows: string[] = [];
+          for (let row = 0; row < 15; row++) {
+            const bit = 30 - row * 2;
+            const bs = (dwGs >>> bit) & 0x03;
+            bitmaskRows.push(`r${row}:${bs}`);
+          }
+          groundUnderItem = cell
+            ? {
+                levelIsH: isH,
+                slot: rom.activeSlot,
+                levelSize: `${widthTiles}x${heightTiles}`,
+                solid: cell.solid,
+                tileId: cell.tileId !== null ? '0x' + cell.tileId.toString(16) : null,
+                groundSet: '0x' + applied.groundSet.toString(16),
+                startPos: applied.startPos,
+                columnDump: colCells.join(' '),
+                bitmaskRaw: '0x' + dwGs.toString(16).padStart(8, '0'),
+                bitmaskPerRow: bitmaskRows.join(' '),
+              }
+            : 'out of bounds';
+        }
+        console.log('[ITEM CLICKED]', {
+          rawId: '0x' + rawId.toString(16),
+          vid,
+          pos: `(${hit.tileX}, ${hit.tileY})`,
+          bPriority: bpri,
+          tileCount: tiles.length,
+          firstTile: tiles[0] ? { tileId: '0x' + tiles[0].tileId.toString(16), atlas: tiles[0].atlasIndex, isBg: tiles[0].isBgStrip ?? false } : null,
+          groundUnderItem,
+        });
+      } else if (upPos) {
+        // No item at click — log ground grid cell if available.
+        // Recompute the ground grid using the same segments to inspect.
+        const segments = computeGroundSegments(b);
+        const { widthTiles, heightTiles } = levelDimensions(b);
+        // Use an off-screen context so drawGround doesn't repaint
+        const tmpCanvas = document.createElement('canvas');
+        const tmpCtx = tmpCanvas.getContext('2d');
+        if (tmpCtx) {
+          const grid = drawGround(tmpCtx, b, widthTiles, heightTiles, null, segments);
+          const cell = grid[upPos.x]?.[upPos.y];
+          // Find which ground segment applies at this column
+          const isH = b.header.direction === 1;
+          const col = isH ? upPos.x : upPos.y;
+          let applied = segments[0];
+          for (const seg of segments) {
+            if (seg.startPos <= col) applied = seg;
+            else break;
+          }
+          console.log('[GROUND CLICKED]', {
+            pos: `(${upPos.x}, ${upPos.y})`,
+            cell: cell ? { solid: cell.solid, tileId: cell.tileId !== null ? '0x' + cell.tileId.toString(16) : null } : 'out of bounds',
+            appliedSegment: applied ? {
+              startPos: applied.startPos,
+              groundSet: '0x' + applied.groundSet.toString(16),
+              groundType: applied.groundType,
+            } : null,
+            allSegments: segments.map((s) => ({
+              startPos: s.startPos,
+              groundSet: '0x' + s.groundSet.toString(16),
+              groundType: s.groundType,
+            })),
+          });
+        }
+      }
+    }
   }
   selectedEnemy.value = null;
   mouseDownPos = null;
@@ -499,9 +608,13 @@ function drawGround(
 
   // Process each segment: write bitmask pattern from startPos to end.
   // Later segments override earlier ones, including clearing to hole.
-  for (const seg of segments) {
+  for (let segIdx = 0; segIdx < segments.length; segIdx++) {
+    const seg = segments[segIdx]!;
     const gSetIdx = seg.groundSet & 0x1f;
-    if (gSetIdx === 0x1f) continue; // skip 0x1F background marker
+    // C++ DrawGroundEx: `if ( 0x1f == uSet && 0 == item )` → skip ONLY
+    // the initial background (segment 0) when 0x1F. Stream groundSet
+    // items with 0x1F are legitimate ground patterns, not a sentinel.
+    if (gSetIdx === 0x1f && segIdx === 0) continue;
 
     const dwGroundSet = getBgSet(romData.rom, gSetIdx, isH);
     const gType = seg.groundType & 0x07;
@@ -587,7 +700,18 @@ function drawItemOnCanvas(
     : allTiles;
 
   if (tiles.length > 0) {
-    for (const t of tiles) blitTile(ctx, t, palette);
+    // C++ canvas-grid behavior: an item tile REPLACES the ground at its
+    // cell (per SetCanvasItem). The BG/item atlas tile may have
+    // transparent pixels (magenta key), which in the C++ render show the
+    // level's palette bg color. To emulate this, we fill each item cell
+    // with bgColor BEFORE blitting the tile, erasing the ground drawn
+    // earlier so transparent parts show bg, not the ground underneath.
+    const bgCol = palette?.bgColorCss ?? '#000';
+    for (const t of tiles) {
+      ctx.fillStyle = bgCol;
+      ctx.fillRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
+      blitTile(ctx, t, palette);
+    }
   } else {
     // Fallback: colored rectangle with hex ID
     const x = item.tileX * TILE_PX;

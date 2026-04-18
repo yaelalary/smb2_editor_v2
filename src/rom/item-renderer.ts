@@ -22,27 +22,31 @@ import {
   GROUND_TYPE_H,
   GROUND_TYPE_V,
 } from './nesleveldef';
-import { getBgSet, emptyDim } from './tile-reader';
+import { getBgSet, getObjTile, getWorldGfx, getHorzDim, emptyDim } from './tile-reader';
 import { getFxForSlot } from './level-layout';
 
 // ─── Public types ──────────────────────────────────────────────────
 
 export interface RenderedTile {
-  /** Tile ID (0-255) — index into the atlas's 16×16 metatile grid. */
+  /** Tile ID (0-255) — index into the atlas. */
   tileId: number;
   /**
    * Atlas index:
-   *   4-7 = item atlases (fx+4, per world theme)
-   *   0-3 = ground atlases (fx, per world theme)
-   *   8   = enemy atlas
+   *   - When `isBgStrip` is false: 4-7 = item atlases (fx+4, 256×256 grid),
+   *     8 = enemy atlas.
+   *   - When `isBgStrip` is true: 0-4 = BG ground strip (4096×16, per gfx).
    */
   atlasIndex: number;
   /** Canvas tile X (absolute). */
   x: number;
   /** Canvas tile Y (absolute). */
   y: number;
-  /** If true, this tile is a ground tile (use ground atlas). */
-  isGround?: boolean;
+  /**
+   * If true, tileId indexes into a BG strip atlas (bgN.bmp, 4096×16).
+   * Set for items rendered via C++ DrawHorzGrObjectEx/DrawVertGrObjectEx
+   * which use GetObjTile + type=4 → DrawGrGamma in DrawCanvas.
+   */
+  isBgStrip?: boolean;
 }
 
 // ─── Internal helpers ──────────────────────────────────────────────
@@ -103,18 +107,26 @@ function renderSingle(
   return out;
 }
 
+/**
+ * Render a horizontal extended item (vid 10, 11 — log bridge, red platform,
+ * etc.). C++ DrawHorzObjectEx calls GetHorzDim which reads tile IDs from
+ * ROM and sets type=4 → BG strip atlas routing.
+ */
 function renderHorizontal(
-  _rom: Uint8Array, rawId: number, _world: number,
-  x: number, y: number, atlas: number,
+  rom: Uint8Array, rawId: number, world: number, gfx: number,
+  x: number, y: number,
 ): RenderedTile[] {
   const id = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
   const size = (rawId - 0x30) & 0x0f;
-  const dim = fallbackDim(id);
+
+  // C++ GetHorzDim: ROM-read tile IDs for items 0x0A, 0x0B.
+  const dim = getHorzDim(rom, id, world, fallbackDim(id));
+
   const out: RenderedTile[] = [];
-  pushTile(out, dim.topleft, x, y, atlas);
-  pushTile(out, dim.topright, x + size, y, atlas);
+  pushBgTile(out, dim.topleft, x, y, gfx);
+  pushBgTile(out, dim.topright, x + size, y, gfx);
   for (let i = 1; i < size; i++) {
-    pushTile(out, dim.middle, x + i, y, atlas);
+    pushBgTile(out, dim.middle, x + i, y, gfx);
   }
   return out;
 }
@@ -202,33 +214,39 @@ function renderMassive(
 }
 
 /**
- * Get the tile ID for an extended item (vid 0-12) from the static
- * SITEM_DIM table. Falls back to 0xFF if the entry doesn't exist.
+ * Push a tile that samples from the BG strip atlas (bgN.bmp).
+ * Mirrors C++ DrawCanvas branch: type!=0 → DrawGrGamma (grtpl).
  */
-function extendedTileId(vid: number, fx: number, objectType: number): number {
-  const fxBlock = SITEM_DIM[fx];
-  const otBlock = fxBlock?.[objectType];
-  const dimEntry = otBlock?.[vid];
-  return dimEntry?.[0] ?? 0xff;
+function pushBgTile(
+  out: RenderedTile[],
+  tileId: number,
+  x: number,
+  y: number,
+  gfx: number,
+): void {
+  if (tileId !== 0xff) {
+    out.push({ tileId, atlasIndex: gfx, x, y, isBgStrip: true });
+  }
 }
 
 function renderHorzGround(
-  rawId: number, fx: number, objectType: number,
-  posX: number, posY: number, atlas: number,
+  rom: Uint8Array, rawId: number, world: number, objectType: number, gfx: number,
+  posX: number, posY: number,
 ): RenderedTile[] {
   const vid = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
   const size = (rawId - 0x30) & 0x0f;
-  const tileId = extendedTileId(vid, fx, objectType);
+  // C++ DrawHorzGrObjectEx: idTile = GetObjTile(id). ROM read, not static.
+  const tileId = getObjTile(rom, vid, world, objectType);
   const out: RenderedTile[] = [];
   for (let i = 0; i <= size; i++) {
-    pushTile(out, tileId, posX + i, posY, atlas);
+    pushBgTile(out, tileId, posX + i, posY, gfx);
   }
   return out;
 }
 
 function renderVertGround(
-  rawId: number, fx: number, objectType: number,
-  posX: number, posY: number, atlas: number,
+  rom: Uint8Array, rawId: number, world: number, objectType: number, gfx: number,
+  posX: number, posY: number,
 ): RenderedTile[] {
   let vid: number;
   let size: number;
@@ -240,12 +258,13 @@ function renderVertGround(
     size = 0x0f * Math.floor((posY + 0x0f) / 0x0f) - posY;
   }
 
-  const tileId = extendedTileId(vid, fx, objectType);
+  // C++ DrawVertGrObjectEx: idTile = GetObjTile(id). ROM read, not static.
+  const tileId = getObjTile(rom, vid, world, objectType);
   const out: RenderedTile[] = [];
 
-  pushTile(out, tileId, posX, posY, atlas);
+  pushBgTile(out, tileId, posX, posY, gfx);
   for (let i = 1; i <= size; i++) {
-    pushTile(out, tileId, posX, posY + i, atlas);
+    pushBgTile(out, tileId, posX, posY + i, gfx);
   }
   return out;
 }
@@ -323,8 +342,10 @@ export function renderItem(
   const world = Math.floor(slot / 30);
   const fx = getFxForSlot(slot);
   const atlas = fx + 4; // item atlas: 4=interior, 5=desert, 6=castle, 7=underground
+  const gfx = getWorldGfx(rom, world); // BG atlas index for horz/vert ground extended items
   const isH = header.direction === 1;
   const rawId = item.itemId;
+  const objType = header.objectType & 0x0f;
 
   if (item.kind === 'entrance') {
     return renderEntrance(rom, rawId, world, item.tileX, item.tileY, atlas);
@@ -350,12 +371,15 @@ export function renderItem(
       if (rawId < 0x30) return [];
       const vid = Math.floor((rawId - 0x30) / 0x10);
       switch (vid) {
+        // HorzGr / VertGr: C++ type=4 → BG strip atlas, GetObjTile (ROM).
         case 0: case 1: case 2: case 3: case 4:
-          return renderHorzGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas);
+          return renderHorzGround(rom, rawId, world, objType, gfx, item.tileX, item.tileY);
         case 5: case 6: case 7:
-          return renderVertGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas);
+          return renderVertGround(rom, rawId, world, objType, gfx, item.tileX, item.tileY);
+        // vid 10/11 (log bridge, red platform, etc.): C++ GetHorzDim
+        // reads tiles from ROM + sets type=4 → BG strip atlas.
         case 10: case 11:
-          return renderHorizontal(rom, rawId, world, item.tileX, item.tileY, atlas);
+          return renderHorizontal(rom, rawId, world, gfx, item.tileX, item.tileY);
         case 8: case 9: case 12:
           return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, fx, header.objectType);
         default: return [];

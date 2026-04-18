@@ -274,6 +274,35 @@ function onMouseUp(e: MouseEvent): void {
   } else {
     // Plain click: single select
     selectedItems.value = hit ? [hit] : [];
+    // ─── DEBUG: log selected item info ────────────────────────────
+    if (hit) {
+      const romData = rom.romData;
+      const b = block.value;
+      if (romData && b) {
+        const world = Math.floor(rom.activeSlot / 30);
+        const isH = b.header.direction === 1;
+        const rawId = hit.itemId;
+        const vid = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : null;
+        const size = rawId >= 0x30 ? rawId & 0x0f : null;
+        const tiles = renderItem(romData.rom, hit, rom.activeSlot, b.header);
+        // eslint-disable-next-line no-console
+        console.log('[ITEM CLICKED]', {
+          kind: hit.kind,
+          rawId: '0x' + rawId.toString(16),
+          vid, size,
+          tileX: hit.tileX, tileY: hit.tileY,
+          world, isH,
+          objectType: b.header.objectType,
+          sourceBytes: hit.sourceBytes.map((b) => '0x' + b.toString(16)),
+          tilesReturned: tiles.map((t) => ({
+            tileId: '0x' + t.tileId.toString(16),
+            atlasIndex: t.atlasIndex,
+            isBgStrip: t.isBgStrip ?? false,
+            x: t.x, y: t.y,
+          })),
+        });
+      }
+    }
   }
   selectedEnemy.value = null;
   mouseDownPos = null;
@@ -325,9 +354,21 @@ function blitTile(
   tile: RenderedTile,
   palette: LevelPalette | null,
 ): void {
-  const src = palette
-    ? getColorizedAtlas(tile.atlasIndex, palette)
-    : null;
+  if (!palette) return;
+  // BG strip tiles (4096×16): horz/vert ground extended items. Mirrors
+  // C++ DrawCanvas type!=0 branch → DrawGrGamma (grtpl = bgN.bmp).
+  if (tile.isBgStrip) {
+    const src = getColorizedBgAtlas(tile.atlasIndex, palette);
+    if (!src) return;
+    const { sx, sy } = bgTileRect(tile.tileId);
+    ctx.drawImage(
+      src, sx, sy, METATILE_SIZE, METATILE_SIZE,
+      tile.x * TILE_PX, tile.y * TILE_PX, TILE_PX, TILE_PX,
+    );
+    return;
+  }
+  // Item atlas (256×256 metatile grid): default path.
+  const src = getColorizedAtlas(tile.atlasIndex, palette);
   if (!src) return;
   const { sx, sy } = metatileRect(tile.tileId);
   ctx.drawImage(

@@ -21,6 +21,50 @@
 
 import type { LevelBlock, LevelItem } from './model';
 
+// ─── Slot label helpers ─────────────────────────────────────────────
+//
+// SMB2 organizes 210 level slots hierarchically: 7 worlds × 3 levels
+// (1-1, 1-2, 1-3, …) × 10 sub-sections each. In the game, "1-1" refers
+// to a full playable level; a single level can contain several rooms
+// (sub-sections) reached via doors. The slot index encodes all three:
+//   slot / 30       → world (0-6)
+//   (slot % 30) / 10 → level within world (0-2)
+//   slot % 10       → sub-section within level (0-9)
+
+/** World index (0-6) for a given slot. */
+export function slotWorld(slot: number): number {
+  return Math.floor(slot / 30);
+}
+
+/** Level index within the world (0-2) for a given slot. */
+export function slotLevel(slot: number): number {
+  return Math.floor((slot % 30) / 10);
+}
+
+/** Sub-section index within the level (0-9) for a given slot. */
+export function slotSubSection(slot: number): number {
+  return slot % 10;
+}
+
+/**
+ * Compact SMB-style label: "1-1·1" (monde-niveau·sous-section, 1-indexed).
+ * Fits in narrow UI columns while remaining unambiguous.
+ */
+export function slotLabel(slot: number): string {
+  const w = slotWorld(slot) + 1;
+  const l = slotLevel(slot) + 1;
+  const s = slotSubSection(slot) + 1;
+  return `${w}-${l}·${s}`;
+}
+
+/** Verbose label for tooltips & details: "Monde 1, niveau 1, sous-section 1". */
+export function slotLabelVerbose(slot: number): string {
+  const w = slotWorld(slot) + 1;
+  const l = slotLevel(slot) + 1;
+  const s = slotSubSection(slot) + 1;
+  return `Monde ${w}, niveau ${l}, sous-section ${s}`;
+}
+
 /**
  * Compute the visual FX index for a given slot. This determines which
  * tileset variant (0-3) to use for variable-size items (48-60).

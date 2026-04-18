@@ -22,7 +22,8 @@ import type { ValidationSuccess } from '@/rom/validation';
 import type { EnemyBlock, EnemyMap, LevelBlock, LevelMap } from '@/rom/model';
 import { parseLevelMap, LevelParseError } from '@/rom/level-parser';
 import { parseEnemyMap, EnemyParseError } from '@/rom/enemy-parser';
-import { LEVELS_PER_WORLD, LEVEL_REGION_BYTES } from '@/rom/constants';
+import { LEVEL_REGION_BYTES } from '@/rom/constants';
+import { slotLabel } from '@/rom/level-layout';
 
 const loadedRom = shallowRef<ValidationSuccess | null>(null);
 const parseError = ref<string | null>(null);
@@ -112,23 +113,6 @@ const sharingStats = computed(() => {
     ),
   };
 });
-
-/**
- * Format a slot index using the ROM's own internal layout:
- * `W{world}:L{level}` where world = slot / LEVELS_PER_WORLD and
- * level = slot % LEVELS_PER_WORLD. This mirrors exactly how the
- * enemy pointer sub-tables are organized (21 worlds × 10 levels).
- *
- * Note: this is NOT the in-game "World 1-1" mapping. That mapping
- * lives in NES_PTR_LEVEL_STARTS and involves extra indirection we
- * haven't parsed yet. The W:L shown here is a debug coordinate for
- * navigating the raw 210-slot table.
- */
-function slotLabel(slot: number): string {
-  const world = Math.floor(slot / LEVELS_PER_WORLD);
-  const level = slot % LEVELS_PER_WORLD;
-  return `W${world}:L${level}`;
-}
 
 function hex(n: number, width = 2): string {
   return n.toString(16).toUpperCase().padStart(width, '0');

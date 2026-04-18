@@ -10,6 +10,7 @@
 
 import type { Command, Mutable } from './types';
 import type { LevelItem, LevelMap, EnemyMap } from '@/rom/model';
+import { slotLabel } from '@/rom/level-layout';
 
 /**
  * Edit the destination of a pointer item (0xF5 + 2 param bytes).
@@ -79,9 +80,7 @@ export class SetSlotMappingCommand implements Command {
     this.oldEnemyBlock = enemyMap.slotToBlock[slot]!;
     this.newEnemyBlock = newEnemyBlock;
 
-    const w = Math.floor(slot / 10);
-    const l = slot % 10;
-    this.label = `Remap W${w}:L${l} → lvl#${newLevelBlock} enm#${newEnemyBlock}`;
+    this.label = `Remap ${slotLabel(slot)} → lvl#${newLevelBlock} enm#${newEnemyBlock}`;
   }
 
   execute(): void {

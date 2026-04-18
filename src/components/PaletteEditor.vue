@@ -94,7 +94,7 @@ function selectColor(nesColorIndex: number): void {
   const palIdx = pickerIndex.value;
   const subPal = Math.floor(palIdx / 4);
   const colIdx = palIdx % 4;
-  const label = `W${Math.floor(rom.activeSlot / 30)} pal ${subPal}:${colIdx}`;
+  const label = `Monde ${Math.floor(rom.activeSlot / 30) + 1} pal ${subPal}:${colIdx}`;
 
   history.execute(
     new SetPaletteColorCommand(

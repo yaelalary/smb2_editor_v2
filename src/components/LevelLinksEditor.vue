@@ -17,21 +17,11 @@ import BasePanel from './common/BasePanel.vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { SetSlotMappingCommand } from '@/commands/link-commands';
-import { LEVELS_PER_WORLD } from '@/rom/constants';
+import { slotLabel, slotLabelVerbose } from '@/rom/level-layout';
 import type { LevelMap, EnemyMap } from '@/rom/model';
 
 const rom = useRomStore();
 const history = useHistoryStore();
-
-function areaLabel(slot: number): string {
-  const w = Math.floor(slot / LEVELS_PER_WORLD);
-  const l = slot % LEVELS_PER_WORLD;
-  return `W${w} area ${l}`;
-}
-
-function shortLabel(slot: number): string {
-  return `W${Math.floor(slot / LEVELS_PER_WORLD)}:${slot % LEVELS_PER_WORLD}`;
-}
 
 /**
  * For each block, find the first area that uses it → used as the
@@ -53,7 +43,7 @@ function buildBlockLabels(
   return firstSlot.map((s, i) => {
     if (s === null) return '(unused data)';
     const c = counts[i] ?? 0;
-    const name = shortLabel(s);
+    const name = slotLabel(s);
     return c > 1 ? `${name} data (shared by ${c} areas)` : `${name} data`;
   });
 }
@@ -87,12 +77,13 @@ const worldGroups = computed(() => {
       const slot = wg * 30 + i;
       areas.push({
         slot,
-        label: areaLabel(slot),
+        label: slotLabel(slot),
+        title: slotLabelVerbose(slot),
         levelBlock: lm.slotToBlock[slot] ?? 0,
         enemyBlock: em.slotToBlock[slot] ?? 0,
       });
     }
-    groups.push({ worldLabel: `World ${wg + 1}`, areas });
+    groups.push({ worldLabel: `Monde ${wg + 1}`, areas });
   }
   return groups;
 });

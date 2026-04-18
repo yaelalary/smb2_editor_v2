@@ -15,7 +15,7 @@ import type { ValidationSuccess } from '@/rom/validation';
 import type { EnemyMap, LevelBlock, LevelMap } from '@/rom/model';
 import { parseLevelMap } from '@/rom/level-parser';
 import { parseEnemyMap } from '@/rom/enemy-parser';
-import { LEVELS_PER_WORLD } from '@/rom/constants';
+import { slotLabel } from '@/rom/level-layout';
 
 export const useRomStore = defineStore('rom', () => {
   const romData = shallowRef<ValidationSuccess | null>(null);
@@ -35,13 +35,8 @@ export const useRomStore = defineStore('rom', () => {
     return map.blocks[idx] ?? null;
   });
 
-  /** "W{w}:L{l}" label for the active slot (debug/display). */
-  const activeSlotLabel = computed(() => {
-    const s = activeSlot.value;
-    const w = Math.floor(s / LEVELS_PER_WORLD);
-    const l = s % LEVELS_PER_WORLD;
-    return `W${w}:L${l}`;
-  });
+  /** Compact SMB-style label for the active slot (e.g. "1-1·1"). */
+  const activeSlotLabel = computed(() => slotLabel(activeSlot.value));
 
   function loadRom(validation: ValidationSuccess): void {
     romData.value = validation;

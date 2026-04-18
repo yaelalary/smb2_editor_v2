@@ -12,26 +12,24 @@ import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
-import { levelDimensions, ITEM_COLORS, getFxForSlot } from '@/rom/level-layout';
+import { levelDimensions, getFxForSlot } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
-import { getBgSet, getBgTile, getWorldGfx, getBPriority } from '@/rom/tile-reader';
+import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
 import { renderItem } from '@/rom/item-renderer';
-import type { RenderedTile } from '@/rom/item-renderer';
+import { CanvasGrid } from '@/rom/canvas-grid';
+import { computeGroundSegments, groundPass } from '@/rom/ground-pass';
+import { drawCanvas } from '@/rom/canvas-draw';
 import {
   getAtlasImage,
   metatileRect,
   preloadAllAtlases,
   METATILE_SIZE,
-  getColorizedAtlas,
-  getColorizedBgAtlas,
-  bgTileRect,
 } from '@/assets/metatiles';
-import type { LevelPalette } from '@/rom/palette-reader';
 
 const TILE_PX = 16;
 
@@ -321,339 +319,16 @@ function onKeyDown(e: KeyboardEvent): void {
 }
 
 // ─── Drawing ────────────────────────────────────────────────────────
-
-/**
- * Draw a single rendered tile on the canvas using the palette-colorized
- * atlas. This is the web equivalent of the C++ DrawGamma/DrawGrGamma.
- */
-function blitTile(
-  ctx: CanvasRenderingContext2D,
-  tile: RenderedTile,
-  palette: LevelPalette | null,
-): void {
-  if (!palette) return;
-  // BG strip tiles (4096×16): horz/vert ground extended items. Mirrors
-  // C++ DrawCanvas type!=0 branch → DrawGrGamma (grtpl = bgN.bmp).
-  if (tile.isBgStrip) {
-    const src = getColorizedBgAtlas(tile.atlasIndex, palette);
-    if (!src) return;
-    const { sx, sy } = bgTileRect(tile.tileId);
-    ctx.drawImage(
-      src, sx, sy, METATILE_SIZE, METATILE_SIZE,
-      tile.x * TILE_PX, tile.y * TILE_PX, TILE_PX, TILE_PX,
-    );
-    return;
-  }
-  // Item atlas (256×256 metatile grid): default path.
-  const src = getColorizedAtlas(tile.atlasIndex, palette);
-  if (!src) return;
-  const { sx, sy } = metatileRect(tile.tileId);
-  ctx.drawImage(
-    src, sx, sy, METATILE_SIZE, METATILE_SIZE,
-    tile.x * TILE_PX, tile.y * TILE_PX, TILE_PX, TILE_PX,
-  );
-}
-
-// ─── Ground segment computation ─────────────────────────────────────
-// Extracted so both drawGround and vine-groundRow can share the logic.
-
-interface GroundSegment {
-  startPos: number;
-  groundSet: number;
-  groundType: number;
-}
-
-/**
- * Walk the item stream and collect ground segments.
- * Each segment records where a groundSet item starts and which
- * groundSet/groundType it carries. Mirrors C++ loader lines 73-99.
- */
-function computeGroundSegments(b: LevelBlock): GroundSegment[] {
-  const isH = b.header.direction === 1;
-  const segments: GroundSegment[] = [];
-  let currentGroundType = b.header.groundType;
-  segments.push({ startPos: 0, groundSet: b.header.groundSet, groundType: currentGroundType });
-
-  let deltaX = 0;
-  let deltaY = 0;
-  let lastGroundPos = 0;
-
-  for (const item of b.items) {
-    switch (item.kind) {
-      case 'skipper': {
-        const lowNibble = (item.sourceBytes[0] ?? 0) & 0x0f;
-        deltaY = 0;
-        deltaX += (lowNibble - 1) * 0x10;
-        break;
-      }
-      case 'backToStart':
-        deltaX = 0;
-        deltaY = 0;
-        break;
-      case 'regular':
-      case 'entrance': {
-        const byte0 = item.sourceBytes[0] ?? 0;
-        const iy = (byte0 >> 4) & 0x0f;
-        deltaY += iy;
-        if (deltaY >= 0x0f) {
-          deltaY = (deltaY + 1) % 16;
-          deltaX += 0x10;
-        }
-        break;
-      }
-      case 'groundSet': {
-        const byte0 = item.sourceBytes[0] ?? 0;
-        const byte1 = item.sourceBytes[1] ?? 0;
-        const gSet = byte1 & 0x1f;
-        const reserved = byte0 & 0x0f;
-        let pos: number;
-        if (isH) {
-          pos = deltaX + 8 * reserved + Math.floor(byte1 / 0x20);
-          if (pos <= lastGroundPos) pos = lastGroundPos + 1;
-        } else {
-          pos = 0x0f * Math.floor(deltaX / 0x10) + 8 * reserved + Math.floor(byte1 / 0x20);
-          if (pos <= lastGroundPos) pos = lastGroundPos + 1;
-        }
-        lastGroundPos = pos;
-        segments.push({ startPos: pos, groundSet: gSet, groundType: currentGroundType });
-        break;
-      }
-      case 'groundType':
-        currentGroundType = (item.sourceBytes[1] ?? 0) & 0x07;
-        break;
-    }
-  }
-  return segments;
-}
-
-/**
- * C++ g_mPriorityList.bgPriority lookup.
- * Items with bgPriority=1 cannot draw over ground (ground has z-priority).
- * Tiles landing on solid-ground cells are filtered out in drawItemOnCanvas.
- */
-// bgPriority=1 items (raw IDs < 0x30) from g_mPriorityList:
-const BG_PRIORITY_IDS = new Set([6, 7, 8, 12, 13, 14, 15, 22, 23, 24, 25, 30, 31]);
-function needsGroundClamp(rawId: number): boolean {
-  if (rawId < 0x30) return BG_PRIORITY_IDS.has(rawId);
-  // Extended items: CONVERT_REGULAR(r) = 0x30 + vid
-  // Only vid 9 (=57, green platform) has bgPriority=1.
-  const vid = Math.floor((rawId - 0x30) / 0x10);
-  return vid === 9;
-}
-
-/**
- * Draw ground for the entire level, processing groundSet items from
- * the stream to handle holes, waterfalls, and terrain changes.
- *
- * Mirrors C++ DrawLevelEx / DrawGroundEx exactly:
- *   1. Build a 2D grid (width × height) where each cell is either a
- *      tile ID or null (no ground).
- *   2. Process ground items in order. Each groundSet item writes its
- *      bitmask pattern from its X position to the end of the canvas,
- *      overriding what was there before (including clearing cells
- *      where bitset=0 — this creates holes).
- *   3. Draw the grid once.
- */
-/**
- * Ground cell — mirrors C++ NES_GITEM in the canvas grid:
- *   - `solid`: matches C++ fVisible. True when the cell contains ground
- *     (even if the tile is 0xFF/invisible). Blocks bgPriority=1 items.
- *   - `tileId`: the metatile to blit, or null when nothing should be
- *     drawn (hole OR solid-but-invisible 0xFF tile).
- */
-export interface GroundCell {
-  solid: boolean;
-  tileId: number | null;
-}
-
-const HOLE_CELL: GroundCell = { solid: false, tileId: null };
-
-function drawGround(
-  ctx: CanvasRenderingContext2D,
-  b: LevelBlock,
-  widthTiles: number,
-  heightTiles: number,
-  palette: LevelPalette | null,
-  segments: GroundSegment[],
-): GroundCell[][] {
-  const romData = rom.romData;
-  if (!romData) {
-    return Array.from({ length: widthTiles }, () => new Array<GroundCell>(heightTiles).fill(HOLE_CELL));
-  }
-  const isH = b.header.direction === 1;
-  const world = Math.floor(rom.activeSlot / 30);
-  // Ground atlas: bgN.bmp per gfx theme (night/day/desert/winter/castle).
-  // Mirrors C++ UseGamma(uColor, fx+4, gfx+10) where gfx = GetFX(world).
-  const gfx = getWorldGfx(romData.rom, world);
-
-  // Ground grid: every cell starts as a hole (not solid, no tile).
-  const grid: GroundCell[][] = Array.from(
-    { length: widthTiles },
-    () => new Array<GroundCell>(heightTiles).fill(HOLE_CELL),
-  );
-
-  // Build a cell from a bitset value using ROM-based tile lookup.
-  // Mirrors C++ DrawGroundEx: reads per-world ground tile IDs via
-  // GetBgTile. Bitset=0 → hole. Non-zero + valid tile → solid+visible.
-  // Non-zero + 0xFF tile → solid+invisible (C++ SetCanvasItem still
-  // marks fVisible=TRUE, which blocks bgPriority=1 items).
-  const cellFor = (groundType: number, bitset: number): GroundCell => {
-    if (bitset === 0) return HOLE_CELL;
-    const tileId = getBgTile(romData.rom, bitset, groundType & 0x07, world, isH);
-    return { solid: true, tileId: tileId === 0xff ? null : tileId };
-  };
-
-  // Process each segment: write bitmask pattern from startPos to end.
-  // Later segments override earlier ones, including clearing to hole.
-  for (let segIdx = 0; segIdx < segments.length; segIdx++) {
-    const seg = segments[segIdx]!;
-    const gSetIdx = seg.groundSet & 0x1f;
-    // C++ DrawGroundEx: `if ( 0x1f == uSet && 0 == item )` → skip ONLY
-    // the initial background (segment 0) when 0x1F. Stream groundSet
-    // items with 0x1F are legitimate ground patterns, not a sentinel.
-    if (gSetIdx === 0x1f && segIdx === 0) continue;
-
-    const dwGroundSet = getBgSet(romData.rom, gSetIdx, isH);
-    const gType = seg.groundType & 0x07;
-
-    if (isH) {
-      // Horizontal: iterate columns from startPos to end, rows 0-14
-      for (let cx = seg.startPos; cx < widthTiles; cx++) {
-        let bit = 30;
-        for (let cy = 0; cy < heightTiles; cy++) {
-          const bitset = (dwGroundSet >>> bit) & 0x03;
-          grid[cx]![cy] = cellFor(gType, bitset);
-          bit -= 2;
-        }
-      }
-    } else {
-      // Vertical: iterate rows from startPos to end, columns 0-15
-      for (let cy = seg.startPos; cy < heightTiles; cy++) {
-        let bit = 30;
-        for (let cx = 0; cx < widthTiles; cx++) {
-          const bitset = (dwGroundSet >>> bit) & 0x03;
-          grid[cx]![cy] = cellFor(gType, bitset);
-          bit -= 2;
-        }
-      }
-    }
-  }
-
-  // Draw the grid — blit from the BG strip atlas (bgN.bmp, 4096×16).
-  const bgSrc = palette ? getColorizedBgAtlas(gfx, palette) : null;
-  if (bgSrc) {
-    for (let cx = 0; cx < widthTiles; cx++) {
-      for (let cy = 0; cy < heightTiles; cy++) {
-        const cell = grid[cx]![cy]!;
-        if (cell.tileId !== null) {
-          const { sx, sy } = bgTileRect(cell.tileId);
-          ctx.drawImage(
-            bgSrc, sx, sy, METATILE_SIZE, METATILE_SIZE,
-            cx * TILE_PX, cy * TILE_PX, TILE_PX, TILE_PX,
-          );
-        }
-      }
-    }
-  }
-  return grid;
-}
-
-/**
- * Draw a level item using the full multi-tile renderer ported from C++.
- * Falls back to a colored rectangle with hex label if no tiles produced.
- *
- * Per-cell z-priority: if the item has bgPriority=1 (ground wins over it),
- * each tile is tested against `groundGrid` — any tile landing on a cell
- * with solid ground (grid[x][y] !== null) is skipped. This mirrors C++
- * SetCanvasItem which rejects bgPriority=1 tiles over existing ground
- * but allows them over holes (fVisible=false cells).
- */
-function drawItemOnCanvas(
-  ctx: CanvasRenderingContext2D,
-  item: LevelItem,
-  isSelected: boolean,
-  palette: LevelPalette | null,
-  groundGrid: GroundCell[][] | null,
-): void {
-  if (item.tileX < 0 || item.tileY < 0) return;
-
-  const romData = rom.romData;
-  const allTiles: RenderedTile[] = romData
-    ? renderItem(romData.rom, item, rom.activeSlot, block.value!.header)
-    : [];
-
-  // Apply per-cell ground priority filter for bgPriority=1 items.
-  // Matches C++ SetCanvasItem: tiles over a solid cell (fVisible=TRUE)
-  // are rejected, including cells where the ground tile is 0xFF.
-  const clampAgainstGround =
-    groundGrid !== null && item.kind === 'regular' && needsGroundClamp(item.itemId);
-  const tiles: RenderedTile[] = clampAgainstGround
-    ? allTiles.filter((t) => {
-        const col = groundGrid[t.x];
-        if (!col) return true; // out of grid bounds — keep tile
-        const cell = col[t.y];
-        return !cell || !cell.solid; // skip tile only if that cell is solid ground
-      })
-    : allTiles;
-
-  if (tiles.length > 0) {
-    // C++ canvas-grid behavior: an item tile REPLACES the ground at its
-    // cell (per SetCanvasItem). The BG/item atlas tile may have
-    // transparent pixels (magenta key), which in the C++ render show the
-    // level's palette bg color. To emulate this, we fill each item cell
-    // with bgColor BEFORE blitting the tile, erasing the ground drawn
-    // earlier so transparent parts show bg, not the ground underneath.
-    const bgCol = palette?.bgColorCss ?? '#000';
-    for (const t of tiles) {
-      ctx.fillStyle = bgCol;
-      ctx.fillRect(t.x * TILE_PX, t.y * TILE_PX, TILE_PX, TILE_PX);
-      blitTile(ctx, t, palette);
-    }
-  } else {
-    // Fallback: colored rectangle with hex ID
-    const x = item.tileX * TILE_PX;
-    const y = item.tileY * TILE_PX;
-    const color = ITEM_COLORS[item.kind] ?? '#666';
-    ctx.fillStyle = color;
-    ctx.globalAlpha = 0.75;
-    ctx.fillRect(x + 1, y + 1, TILE_PX - 2, TILE_PX - 2);
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x + 0.5, y + 0.5, TILE_PX - 1, TILE_PX - 1);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 8px monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const label = item.itemId >= 0 ? item.itemId.toString(16).toUpperCase() : '?';
-    ctx.fillText(label, x + TILE_PX / 2, y + TILE_PX / 2, TILE_PX - 4);
-    ctx.textAlign = 'start';
-    ctx.textBaseline = 'alphabetic';
-  }
-
-  // Selection ring — covers all tiles of the item.
-  if (isSelected) {
-    if (tiles.length > 0) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const t of tiles) {
-        if (t.x < minX) minX = t.x;
-        if (t.y < minY) minY = t.y;
-        if (t.x > maxX) maxX = t.x;
-        if (t.y > maxY) maxY = t.y;
-      }
-      ctx.strokeStyle = '#ffcc00';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(
-        minX * TILE_PX, minY * TILE_PX,
-        (maxX - minX + 1) * TILE_PX, (maxY - minY + 1) * TILE_PX,
-      );
-    } else {
-      ctx.strokeStyle = '#ffcc00';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
-    }
-  }
-}
+//
+// Mirrors C++ DrawLevelEx (clvldraw_worker.cpp:5) verbatim:
+//   1. AllocCanvas(widthTiles, heightTiles, fx)   → CanvasGrid
+//   2. ground pass (DrawGroundEx for each segment) → groundPass()
+//   3. item pass in stream order (DrawObjectEx)   → renderItem() per item
+//   4. DrawCanvas (atlas per cell.type)           → drawCanvas()
+// The priority rejection lives in grid.setItem (SetCanvasItem port), so
+// there is no post-sort, no ground-occupancy pre-pass, no transparency
+// eraser. The initial bgColor fill is what magenta-transparent atlas
+// pixels reveal in the final blit.
 
 function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   const ctx = canvas.getContext('2d');
@@ -670,8 +345,6 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   canvas.style.height = `${cssH}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Background color from the level's NES palette (palette 0, color 0).
-  // Read dynamically from the ROM — no hardcoding.
   const romData = rom.romData;
   const palette = romData
     ? readLevelPalette(romData.rom, rom.activeSlot, b.header.palette)
@@ -679,7 +352,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   ctx.fillStyle = palette?.bgColorCss ?? '#1a1a2e';
   ctx.fillRect(0, 0, cssW, cssH);
 
-  // Grid (subtle, works on both light and dark backgrounds).
+  // Subtle grid lines (work on any bg).
   ctx.strokeStyle = 'rgba(0,0,0,0.08)';
   ctx.lineWidth = 0.5;
   for (let x = 0; x <= widthTiles; x++) {
@@ -716,34 +389,43 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     }
   }
 
-  // Build ground grid + draw it. Grid is then reused for per-cell
-  // z-priority filtering on bgPriority=1 items — mirrors C++
-  // SetCanvasItem behavior cell-by-cell, not a static row clamp.
-  const segments = computeGroundSegments(b);
-  const groundGrid = drawGround(ctx, b, widthTiles, heightTiles, palette, segments);
+  // ─── Canvas grid pipeline (C++ DrawLevelEx port) ────────────────
+  if (romData) {
+    const isH = b.header.direction === 1;
+    const world = Math.floor(rom.activeSlot / 30);
+    const fx = getFxForSlot(rom.activeSlot);
+    const gfx = getWorldGfx(romData.rom, world);
 
-  // Items — full multi-tile rendering ported from C++ Draw*ObjectEx.
-  // Sort by bPriority DESCENDING: high values (back) drawn first, low
-  // values (front) drawn last. Mirrors C++ SetCanvasItem priority check
-  // (existing.bPriority < new.bPriority → reject new). Stable sort via
-  // a stable key preserves stream order within equal priorities.
-  const sortedItems = b.items
-    .map((item, streamIdx) => ({ item, streamIdx, pri: getBPriority(item.itemId) }))
-    .sort((a, b) => (b.pri - a.pri) || (a.streamIdx - b.streamIdx));
-  for (const { item } of sortedItems) {
-    drawItemOnCanvas(ctx, item, selectedItems.value.includes(item), palette, groundGrid);
+    const grid = new CanvasGrid(widthTiles, heightTiles, fx, gfx, isH);
+    const segments = computeGroundSegments(b);
+    groundPass(grid, romData.rom, world, segments);
+    for (const item of b.items) {
+      renderItem(grid, item, romData.rom, rom.activeSlot, b.header);
+    }
+    drawCanvas(ctx, grid, palette);
+
+    // Selection rings — drawn as a single-tile box at the item anchor.
+    // Multi-tile items show a small ring at the anchor; the full footprint
+    // is still visible via the atlas blit. Keep this simple: computing
+    // per-item footprint from the grid requires tracking regularId writes
+    // across cells, which doesn't round-trip reliably when items overlap.
+    for (const item of selectedItems.value) {
+      if (item.tileX < 0 || item.tileY < 0) continue;
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
+    }
   }
 
-  // Enemy overlay — enemies use the overworld atlases (0-2) which contain
-  // pre-colored enemy sprites. In the C++ tool, Draw(eColor, ...) uses
-  // bmTpl[eColor] directly WITHOUT palette colorization. The overworld
-  // atlases have the actual enemy colors baked in.
-  // Atlas 0 = 5.bmp, atlas 1 = 6.bmp, atlas 2 = 7.bmp.
-  // We use fx capped to 0-2 since atlas 3 (9.bmp) is not a valid overworld atlas.
+  // Enemy overlay — enemies use the overworld atlases (0-3) which contain
+  // pre-colored enemy sprites. In the C++ tool (clvldraw_worker.cpp:48):
+  //   m_Canvas.eColor = 3 - (*ed)[nlfEnemyColor];
+  // Then DrawCanvas calls Draw(eColor, ...) → bmTpl[eColor] = one of
+  // 5.bmp/6.bmp/7.bmp/9.bmp. Atlas 3 (9.bmp) is used for worlds/palettes
+  // that need it — notably for bosses like Wart and Fryguy.
   if (editor.showEnemies) {
     const enemyBlock = getEnemyBlock();
-    const fx = getFxForSlot(rom.activeSlot);
-    const enemyAtlasIdx = Math.min(fx, 2); // overworld atlas 0-2
+    const enemyAtlasIdx = 3 - (b.header.enemyColor & 0x03);
     const enemyAtlasSrc = getAtlasImage(enemyAtlasIdx);
     if (enemyBlock && enemyAtlasSrc) {
       const isH = b.header.direction === 1;

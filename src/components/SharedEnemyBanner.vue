@@ -10,18 +10,12 @@ import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
 import { DetachEnemyBlockCommand } from '@/commands/detach-enemy-command';
-import { LEVELS_PER_WORLD } from '@/rom/constants';
+import { slotLabel } from '@/rom/level-layout';
 import type { EnemyBlock } from '@/rom/model';
 
 const rom = useRomStore();
 const history = useHistoryStore();
 const editor = useEditorStore();
-
-function slotLabel(slot: number): string {
-  const w = Math.floor(slot / LEVELS_PER_WORLD);
-  const l = slot % LEVELS_PER_WORLD;
-  return `W${w}:L${l}`;
-}
 
 const enemyBlock = computed<EnemyBlock | null>(() => {
   void history.revision;

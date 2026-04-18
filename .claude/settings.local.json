@@ -41,7 +41,9 @@
       "Bash(iconv -f UTF-16LE -t UTF-8 \"c:/Users/Yael/Documents/Dev/Web/smb2/smb2/smb2.rc\")",
       "Bash(find \"C:/Users/Yael/Documents/Dev/Web/smb2/smb2/cpp/\" -name \"*.cpp\" -exec grep -l \"MoveGround\" {} \\\\;)",
       "Bash(cp /tmp/extract-tile.mjs ./extract-tile.mjs)",
-      "Bash(node extract-tile.mjs 1 a0)"
+      "Bash(node extract-tile.mjs 1 a0)",
+      "Bash(node extract-vines.mjs)",
+      "Bash(node -e *)"
     ]
   }
 }

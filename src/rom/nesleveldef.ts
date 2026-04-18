@@ -488,6 +488,92 @@ export const PRIORITY_LIST: readonly PriorityEntry[] = [
   { bgPriority: 0, objId: 60, priority: 4 },
 ];
 
+/**
+ * CONVERT_REGULAR macro port (clvldraw.h:20). For ids >= 0x30, the C++
+ * code collapses each 0x10-wide slice to a single index in 48..60.
+ */
+export function convertRegular(r: number): number {
+  return r >= 0x30 ? 0x30 + Math.floor((r - 0x30) / 0x10) : r;
+}
+
+/**
+ * PRIORITY_LIST lookup with CONVERT_REGULAR applied. Returns the
+ * PriorityEntry for a raw item id (rawId) as SetCanvasItem would.
+ */
+export function getPriorityEntry(rawId: number): PriorityEntry {
+  const idx = convertRegular(rawId);
+  return PRIORITY_LIST[idx] ?? PRIORITY_LIST[0]!;
+}
+
+// ────────────────────────────────────────────────────────────────────
+// G.1 BG_PRIOR tables (nesleveldef.cpp:1382 g_mbgPriority,
+//                     nesleveldef.cpp:1425 g_mvbgPriority)
+// ────────────────────────────────────────────────────────────────────
+//
+// Indexed by (fx * 8 + groundType). Each DWORD literal unpacks big-endian
+// into [gr0, gr1, gr2, gr3] via gd(). The `bitset` index (0..3) — taken
+// from `3 & type` of a ground cell — picks the gr byte. When that byte
+// is non-zero, the BG_PRIOR macro returns truthy and the tile on the
+// losing side is rejected by SetCanvasItem.
+
+/** Horizontal bg-priority table (32 entries). */
+export const BG_PRIORITY_H: readonly (readonly [number, number, number, number])[] = [
+  // fx: 00
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  // fx: 01
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  // fx: 02
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  // fx: 03
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+];
+
+/** Vertical bg-priority table (32 entries). */
+export const BG_PRIORITY_V: readonly (readonly [number, number, number, number])[] = [
+  // fx: 00
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  // fx: 01
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  // fx: 02
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  // fx: 03
+  gd(0x01010100), gd(0x00010100), gd(0x01010100), gd(0x01010100),
+  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+];
+
+/**
+ * BG_PRIOR macro port (clvldraw.h:22). Returns 0 when the regular item
+ * has no bg-priority flag; otherwise indexes the horizontal or vertical
+ * table by (fx, groundType) and picks the byte at `bitset`.
+ *
+ * Parameters mirror the C++ macro order:
+ *   regularId — already CONVERT_REGULAR-converted (index into PRIORITY_LIST)
+ *   bitset    — 1..3, the ground cell's `3 & type`
+ *   fx        — world graphics slot (0..3)
+ *   grtype    — groundType 0..7
+ *   isH       — true for horizontal levels
+ */
+export function bgPrior(
+  regularId: number,
+  bitset: number,
+  fx: number,
+  grtype: number,
+  isH: boolean,
+): number {
+  if (!(PRIORITY_LIST[regularId]?.bgPriority)) return 0;
+  const table = isH ? BG_PRIORITY_H : BG_PRIORITY_V;
+  const row = table[8 * fx + grtype];
+  if (!row) return 0;
+  return row[bitset & 3] ?? 0;
+}
+
 // ────────────────────────────────────────────────────────────────────
 // H. World interior table (g_mWorldInterior)
 // ────────────────────────────────────────────────────────────────────

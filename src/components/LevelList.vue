@@ -11,15 +11,10 @@
 import { computed } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { useRomStore } from '@/stores/rom';
-import { LEVELS_PER_WORLD, MAX_LEVELS } from '@/rom/constants';
+import { MAX_LEVELS } from '@/rom/constants';
+import { slotLabel, slotLabelVerbose } from '@/rom/level-layout';
 
 const rom = useRomStore();
-
-function slotLabel(slot: number): string {
-  const w = Math.floor(slot / LEVELS_PER_WORLD);
-  const l = slot % LEVELS_PER_WORLD;
-  return `W${w}:L${l}`;
-}
 
 const slots = computed(() => {
   const lm = rom.levelMap;
@@ -29,8 +24,9 @@ const slots = computed(() => {
     const block = lm.blocks[blockIdx]!;
     return {
       slot: i,
-      label: slotLabel(i),
       blockIdx,
+      label: slotLabel(i),
+      title: slotLabelVerbose(i),
       direction: block.header.direction === 1 ? 'H' : 'V',
       length: block.header.length + 1,
       items: block.items.length,
@@ -55,6 +51,7 @@ const slots = computed(() => {
             ? 'bg-accent/10 text-ink font-semibold'
             : 'text-ink-muted',
         ]"
+        :title="s.title"
         @click="rom.selectSlot(s.slot)"
       >
         <span class="inline-block w-16">{{ s.label }}</span>

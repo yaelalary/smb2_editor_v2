@@ -59,10 +59,10 @@ function fallbackDim(itemId: number): NesItemDim {
 
 /**
  * Compute the first ground row (topmost Y with ground) for a column.
- * Used to stop vertical items from extending through the ground.
+ * Used to stop vines from extending through the ground.
  * Returns canvasHeight if no ground exists.
  */
-function firstGroundRow(
+export function firstGroundRow(
   rom: Uint8Array,
   slot: number,
   isHorizontal: boolean,
@@ -123,7 +123,6 @@ function renderVertical(
   _rom: Uint8Array, rawId: number, _world: number,
   posX: number, posY: number,
   isInverted: boolean, isHorizontalLevel: boolean, atlas: number,
-  groundRow?: number,
 ): RenderedTile[] {
   let id: number;
   let size: number;
@@ -139,25 +138,8 @@ function renderVertical(
   const dim = fallbackDim(id);
   const out: RenderedTile[] = [];
 
-  // Clamp size so vertical items stop at the ground boundary
-  // (mirrors C++ IsCanvasLineContainLayerLimit / vine ground check).
-  if (groundRow !== undefined && !isInverted) {
-    const maxExtend = groundRow - posY - 1;
-    if (maxExtend >= 0 && size > maxExtend) {
-      size = maxExtend;
-    }
-  }
-
   if (!isInverted) {
     if (id === 0x0c || id === 0x0d || id === 0x0f) size += 0x0f;
-
-    // Re-clamp after vine extension
-    if (groundRow !== undefined) {
-      const maxExtend = groundRow - posY - 1;
-      if (maxExtend >= 0 && size > maxExtend) {
-        size = maxExtend;
-      }
-    }
 
     pushTile(out, dim.topleft, posX, posY, atlas);
     for (let i = 1; i < size; i++) {
@@ -183,16 +165,10 @@ function renderVertical(
 function renderMassive(
   _rom: Uint8Array, rawId: number, _world: number,
   posX: number, posY: number, atlas: number,
-  fx?: number, objectType?: number, groundRow?: number,
+  fx?: number, objectType?: number,
 ): RenderedTile[] {
   const sizeX = rawId >= 0x30 ? ((rawId - 0x30) & 0x0f) : 5;
-  let sizeY = 0x0e;
-
-  // Clamp height at ground level
-  if (groundRow !== undefined) {
-    const max = groundRow - posY - 1;
-    if (max >= 0 && sizeY > max) sizeY = max;
-  }
+  const sizeY = 0x0e;
   const idRegular = rawId >= 0x30 ? Math.floor((rawId - 0x30) / 0x10) : rawId;
 
   // Use static tables (grid-compatible tile IDs).
@@ -253,7 +229,6 @@ function renderHorzGround(
 function renderVertGround(
   rawId: number, fx: number, objectType: number,
   posX: number, posY: number, atlas: number,
-  groundRow?: number,
 ): RenderedTile[] {
   let vid: number;
   let size: number;
@@ -263,12 +238,6 @@ function renderVertGround(
   } else {
     vid = rawId;
     size = 0x0f * Math.floor((posY + 0x0f) / 0x0f) - posY;
-  }
-
-  // Clamp at ground level
-  if (groundRow !== undefined) {
-    const max = groundRow - posY - 1;
-    if (max >= 0 && size > max) size = max;
   }
 
   const tileId = extendedTileId(vid, fx, objectType);
@@ -338,8 +307,10 @@ function renderEntrance(
 
 /**
  * Compute all tiles for a level item, mirroring DrawObjectEx dispatch.
- * Returns an empty array for meta items (skipper, backToStart, pointer,
- * groundSet, groundType).
+ *
+ * Items extend to their full size. The C++ SetCanvasItem priority system
+ * (bgPriority=1 items blocked by ground) is emulated at the canvas level
+ * by filtering tiles against the ground grid — see drawItemOnCanvas.
  */
 export function renderItem(
   rom: Uint8Array,
@@ -355,9 +326,6 @@ export function renderItem(
   const isH = header.direction === 1;
   const rawId = item.itemId;
 
-  // Ground row limit: vertical items stop before the first ground row.
-  const gRow = firstGroundRow(rom, slot, isH, header.groundSet, isH ? 15 : (header.length + 1) * 15);
-
   if (item.kind === 'entrance') {
     return renderEntrance(rom, rawId, world, item.tileX, item.tileY, atlas);
   }
@@ -366,7 +334,7 @@ export function renderItem(
   // ─── Regular item dispatch (mirrors DrawObjectEx switch) ────────
   switch (rawId) {
     case 6: case 7: case 8: case 12: case 13: case 15: case 22:
-      return renderVertical(rom, rawId, world, item.tileX, item.tileY, false, isH, atlas, gRow);
+      return renderVertical(rom, rawId, world, item.tileX, item.tileY, false, isH, atlas);
     case 18:
       return renderVertical(rom, rawId, world, item.tileX, item.tileY, true, isH, atlas);
     case 0: case 1: case 2: case 3: case 4: case 5: case 17:
@@ -375,7 +343,7 @@ export function renderItem(
     case 44: case 45: case 46: case 47:
       return renderSingle(rom, rawId, world, item.tileX, item.tileY, atlas);
     case 24: case 25:
-      return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, undefined, undefined, gRow);
+      return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas);
     case 14: case 16: case 23: case 30: case 31:
       return renderSpecialRegular(rom, rawId, world, item.tileX, item.tileY, atlas);
     default: {
@@ -385,11 +353,11 @@ export function renderItem(
         case 0: case 1: case 2: case 3: case 4:
           return renderHorzGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas);
         case 5: case 6: case 7:
-          return renderVertGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas, gRow);
+          return renderVertGround(rawId, fx, header.objectType, item.tileX, item.tileY, atlas);
         case 10: case 11:
           return renderHorizontal(rom, rawId, world, item.tileX, item.tileY, atlas);
         case 8: case 9: case 12:
-          return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, fx, header.objectType, gRow);
+          return renderMassive(rom, rawId, world, item.tileX, item.tileY, atlas, fx, header.objectType);
         default: return [];
       }
     }

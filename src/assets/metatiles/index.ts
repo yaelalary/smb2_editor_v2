@@ -24,6 +24,11 @@ import atlas5Url from './atlas-5.png';
 import atlas6Url from './atlas-6.png';
 import atlas7Url from './atlas-7.png';
 import atlas8Url from './atlas-8.png';
+import bg0Url from './bg-0.png';
+import bg1Url from './bg-1.png';
+import bg2Url from './bg-2.png';
+import bg3Url from './bg-3.png';
+import bg4Url from './bg-4.png';
 
 export const ATLAS_URLS: ReadonlyArray<string> = [
   atlas0Url,
@@ -37,6 +42,19 @@ export const ATLAS_URLS: ReadonlyArray<string> = [
   atlas8Url,
 ];
 
+/**
+ * Ground tile atlases — one per gfx theme (night, day, desert, winter,
+ * castle). Horizontal strip format: 4096×16 = 256 tiles of 16×16.
+ * Mirrors C++ bmTpl[gfx+10] = bgN.bmp (IDB_BITMAP11-15).
+ */
+export const BG_ATLAS_URLS: ReadonlyArray<string> = [
+  bg0Url,
+  bg1Url,
+  bg2Url,
+  bg3Url,
+  bg4Url,
+];
+
 export const METATILE_SIZE = 16;
 export const ATLAS_COLS = 16;
 
@@ -48,6 +66,14 @@ export function metatileRect(id: number): { sx: number; sy: number } {
     sx: (id % ATLAS_COLS) * METATILE_SIZE,
     sy: Math.floor(id / ATLAS_COLS) * METATILE_SIZE,
   };
+}
+
+/**
+ * Compute the source rectangle for a ground tile ID within a BG strip
+ * (4096×16 horizontal layout). BG strips hold 256 tiles in one row.
+ */
+export function bgTileRect(id: number): { sx: number; sy: number } {
+  return { sx: id * METATILE_SIZE, sy: 0 };
 }
 
 // ─── Image loading ──────────────────────────────────────────────────
@@ -83,6 +109,13 @@ export function getAtlasImage(index: number): HTMLImageElement | null {
   return imageCache.get(url) ?? null;
 }
 
+/** Get the BG atlas Image synchronously (null if not yet loaded). */
+export function getBgAtlasImage(gfx: number): HTMLImageElement | null {
+  const url = BG_ATLAS_URLS[gfx];
+  if (!url) return null;
+  return imageCache.get(url) ?? null;
+}
+
 /**
  * Pre-load one or more atlas images. Call this before drawing so that
  * `getAtlasImage` returns a non-null value synchronously.
@@ -98,7 +131,10 @@ export async function preloadAtlases(indices: number[]): Promise<void> {
 
 /** Pre-load ALL atlases (call once after ROM load). */
 export async function preloadAllAtlases(): Promise<void> {
-  await preloadAtlases(ATLAS_URLS.map((_, i) => i));
+  await Promise.all([
+    ...ATLAS_URLS.map(loadImage),
+    ...BG_ATLAS_URLS.map(loadImage),
+  ]);
 }
 
 // ─── Palette colorization (UseGamma port) ──────────────────────────
@@ -186,7 +222,62 @@ export function getColorizedAtlas(
   return offscreen;
 }
 
+/**
+ * Palette-colorize a BG ground atlas (horizontal strip 4096×16).
+ * Same grayscale-remap logic as getColorizedAtlas, different source.
+ */
+const bgColorizedCache = new Map<string, OffscreenCanvas>();
+
+export function getColorizedBgAtlas(
+  gfx: number,
+  palette: LevelPalette,
+): OffscreenCanvas | null {
+  const key = `bg${gfx}:${palette.nesIndices.join(',')}`;
+  const cached = bgColorizedCache.get(key);
+  if (cached) return cached;
+
+  const srcImg = getBgAtlasImage(gfx);
+  if (!srcImg) return null;
+
+  const w = srcImg.naturalWidth;
+  const h = srcImg.naturalHeight;
+  const offscreen = new OffscreenCanvas(w, h);
+  const ctx = offscreen.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.drawImage(srcImg, 0, 0);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+
+  const lut: [number, number, number][] = [];
+  for (let i = 0; i < 16; i++) {
+    lut.push(palette.colors[i] ?? [0, 0, 0]);
+  }
+
+  for (let i = 0; i < data.length; i += 4) {
+    const a = data[i + 3]!;
+    if (a === 0) continue;
+    const r = data[i]!;
+    const g = data[i + 1]!;
+    const b = data[i + 2]!;
+    if (Math.abs(r - g) <= 1 && Math.abs(g - b) <= 1) {
+      const idx = Math.min(Math.floor(r / 0x10), 15);
+      const color = lut[idx]!;
+      data[i] = color[0];
+      data[i + 1] = color[1];
+      data[i + 2] = color[2];
+    } else {
+      data[i + 3] = 0;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  bgColorizedCache.set(key, offscreen);
+  return offscreen;
+}
+
 /** Clear the colorized atlas cache (call on ROM unload). */
 export function clearColorizedCache(): void {
   colorizedCache.clear();
+  bgColorizedCache.clear();
 }

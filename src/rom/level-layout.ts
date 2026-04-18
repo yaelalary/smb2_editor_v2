@@ -86,6 +86,7 @@ export function computeItemPositions(block: LevelBlock): PositionedItem[] {
       case 'skipper': {
         // 0xF2 → low nibble 2, skip 1 page; 0xF3 → skip 2 pages.
         const lowNibble = item.sourceBytes[0]! & 0x0f;
+        deltaY = 0;
         deltaX += (lowNibble - 1) * 0x10;
         break;
       }

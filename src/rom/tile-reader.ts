@@ -376,4 +376,36 @@ export function getBgTile(
   return rd(rom, ptr + 4 * bgType + bgSet);
 }
 
+// ─── GetFX (world gfx theme index) ─────────────────────────────────
+
+/**
+ * g_mWorldInterior table from C++ nesleveldef.cpp:1604.
+ * Matches (bHi << 8 | bLow) read from ROM to a gfx theme index 0-4:
+ *   0 = night, 1 = day, 2 = desert, 3 = winter, 4 = castle.
+ * These drive which BG ground atlas (bgN.bmp) to use.
+ */
+const WORLD_INTERIOR: ReadonlyArray<number> = [
+  0x0a0c, // night
+  0x100c, // day
+  0x120d, // desert
+  0x140e, // winter
+  0x160f, // castle
+];
+
+/**
+ * Per-world gfx theme index (0-4). Reads ROM pointer table at
+ * 0x1fe10 / 0x1fe17 and matches against g_mWorldInterior.
+ * Mirrors C++ CNesEditor::GetFX in cneseditor_editor.cpp:405.
+ */
+export function getWorldGfx(rom: Uint8Array, world: number): number {
+  if (world < 0 || world >= 7) return 0;
+  const bLow = rd(rom, 0x1fe10 + world);
+  const bHi = rd(rom, 0x1fe17 + world);
+  const key = bLow | (bHi << 8);
+  for (let i = 0; i < WORLD_INTERIOR.length; i++) {
+    if (WORLD_INTERIOR[i] === key) return i;
+  }
+  return 0;
+}
+
 export { emptyDim };

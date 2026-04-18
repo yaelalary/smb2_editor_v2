@@ -217,6 +217,7 @@ function populateAbsolutePositions(items: LevelItem[]): void {
     switch (item.kind) {
       case 'skipper': {
         const lowNibble = item.sourceBytes[0]! & 0x0f;
+        deltaY = 0;
         deltaX += (lowNibble - 1) * 0x10;
         break;
       }

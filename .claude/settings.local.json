@@ -38,7 +38,8 @@
       "Bash(ls -la \"c:/Users/Yael/Documents/Dev/Web/smb2/smb2res/rc/\"[0-9]*.bmp)",
       "Bash(python3 -c ' *)",
       "Bash(node -e ' *)",
-      "Bash(iconv -f UTF-16LE -t UTF-8 \"c:/Users/Yael/Documents/Dev/Web/smb2/smb2/smb2.rc\")"
+      "Bash(iconv -f UTF-16LE -t UTF-8 \"c:/Users/Yael/Documents/Dev/Web/smb2/smb2/smb2.rc\")",
+      "Bash(find \"C:/Users/Yael/Documents/Dev/Web/smb2/smb2/cpp/\" -name \"*.cpp\" -exec grep -l \"MoveGround\" {} \\\\;)"
     ]
   }
 }

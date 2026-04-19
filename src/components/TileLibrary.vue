@@ -13,6 +13,7 @@
 import { onMounted, ref, watch, nextTick } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { ITEM_CATEGORIES, DRAG_MIME } from '@/rom/item-categories';
+import { activeDrag, hideNativeDragImage } from '@/ui/drag-state';
 import { ITEM_NAMES, ITEM_DIM, getItemDimTiles } from '@/rom/nesleveldef';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
@@ -68,6 +69,14 @@ function onDragStart(e: DragEvent, itemId: number): void {
   if (!e.dataTransfer) return;
   e.dataTransfer.effectAllowed = 'copy';
   e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ itemId }));
+  // Hide the default drag image (library card screenshot) and publish
+  // the payload so the canvas ghost-renders the actual sprite instead.
+  hideNativeDragImage(e);
+  activeDrag.value = { kind: 'item', id: itemId };
+}
+
+function onDragEnd(): void {
+  activeDrag.value = null;
 }
 
 function itemName(id: number): string {
@@ -132,6 +141,7 @@ function drawTile(el: unknown, itemId: number): void {
                    hover:bg-panel-subtle transition-colors
                    border border-transparent hover:border-panel-border"
             @dragstart="(e) => onDragStart(e, itemId)"
+            @dragend="onDragEnd"
           >
             <canvas
               v-if="atlasReady && primaryTileId(itemId) !== null"

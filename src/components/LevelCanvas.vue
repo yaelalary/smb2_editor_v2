@@ -21,6 +21,7 @@ import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
 import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
+import { activeDrag } from '@/ui/drag-state';
 import { renderItem } from '@/rom/item-renderer';
 import { CanvasGrid } from '@/rom/canvas-grid';
 import { computeGroundSegments, groundPass } from '@/rom/ground-pass';
@@ -138,6 +139,7 @@ function onDragLeave(): void {
 function onDrop(e: DragEvent): void {
   e.preventDefault();
   ghostTile.value = null;
+  activeDrag.value = null;
   if (!e.dataTransfer) return;
 
   const tile = tileFromEvent(e);
@@ -520,7 +522,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
     }
 
-    // ── Ghost overlay (drag-move + resize) ───────────────────────
+    // ── Ghost overlay (drag-move + resize + library drop) ──────
     //
     // `grid` already excludes the preview items, so it doubles as the
     // base for the diff. We clone it, stamp the preview items at their
@@ -531,7 +533,12 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     //     land)
     //   - no "duplicate" perception — the original is gone while the
     //     drag is in progress
-    if (dragActive || resizeActive) {
+    const libDrag = activeDrag.value;
+    const libDragTile = ghostTile.value;
+    const libItemActive =
+      libDrag !== null && libDrag.kind === 'item' && libDragTile !== null;
+
+    if (dragActive || resizeActive || libItemActive) {
       const ghostGrid = grid.clone();
       if (dragActive) {
         for (const src of selectedItems.value) {
@@ -551,6 +558,17 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
         } as LevelItem;
         renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);
       }
+      if (libItemActive) {
+        const previewItem: LevelItem = {
+          kind: 'regular',
+          itemId: libDrag.id,
+          tileX: libDragTile.x,
+          tileY: libDragTile.y,
+          sourceBytes: new Uint8Array([0, libDrag.id & 0xff]),
+          sourceRange: [0, 0],
+        } as LevelItem;
+        renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);
+      }
 
       ctx.save();
       ctx.globalAlpha = 0.55;
@@ -559,18 +577,25 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
 
       // Dashed outline at each new anchor so the drop target is obvious
       // even when the ghost is mostly transparent.
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 2]);
       if (dragActive) {
-        ctx.strokeStyle = '#ffcc00';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 2]);
         for (const src of selectedItems.value) {
           if (src.tileX < 0 || src.tileY < 0) continue;
           const gx = src.tileX + dp.dx;
           const gy = src.tileY + dp.dy;
           ctx.strokeRect(gx * TILE_PX + 0.5, gy * TILE_PX + 0.5, TILE_PX - 1, TILE_PX - 1);
         }
-        ctx.setLineDash([]);
       }
+      if (libItemActive) {
+        ctx.strokeRect(
+          libDragTile.x * TILE_PX + 0.5,
+          libDragTile.y * TILE_PX + 0.5,
+          TILE_PX - 1, TILE_PX - 1,
+        );
+      }
+      ctx.setLineDash([]);
     }
 
     // Resize handles — yellow squares at the end of each selected
@@ -655,16 +680,45 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     }
   }
 
-  // Drop ghost preview.
-  const ghost = ghostTile.value;
-  if (ghost) {
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.fillRect(ghost.x * TILE_PX, ghost.y * TILE_PX, TILE_PX, TILE_PX);
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 2]);
-    ctx.strokeRect(ghost.x * TILE_PX + 0.5, ghost.y * TILE_PX + 0.5, TILE_PX - 1, TILE_PX - 1);
-    ctx.setLineDash([]);
+  // Library drop ghost — enemies are blitted directly from their atlas
+  // (not through the canvas grid), so handle them here. Item ghosts are
+  // handled inside the grid block above via drawCanvasDiff.
+  const libEnemyDrag = activeDrag.value;
+  const libEnemyTile = ghostTile.value;
+  if (libEnemyDrag && libEnemyDrag.kind === 'enemy' && libEnemyTile) {
+    const enemyAtlasIdx = 3 - (b.header.enemyColor & 0x03);
+    const atlasSrc = getAtlasImage(enemyAtlasIdx);
+    const dim = ENEMY_DIM[libEnemyDrag.id & 0x7f];
+    if (atlasSrc && dim && dim[1] !== 0xff) {
+      const spriteId = dim[0]!;
+      const szxy = dim[1]!;
+      const cx = szxy & 0x0f;
+      const cy = (szxy >> 4) & 0x0f;
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      for (let iy = 0; iy < cy; iy++) {
+        for (let ix = 0; ix < cx; ix++) {
+          const tid = spriteId + (ix | (iy << 4));
+          const { sx, sy } = metatileRect(tid);
+          ctx.drawImage(
+            atlasSrc, sx, sy, METATILE_SIZE, METATILE_SIZE,
+            (libEnemyTile.x + ix) * TILE_PX,
+            (libEnemyTile.y + iy) * TILE_PX,
+            TILE_PX, TILE_PX,
+          );
+        }
+      }
+      ctx.restore();
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 2]);
+      ctx.strokeRect(
+        libEnemyTile.x * TILE_PX + 0.5,
+        libEnemyTile.y * TILE_PX + 0.5,
+        cx * TILE_PX - 1, cy * TILE_PX - 1,
+      );
+      ctx.setLineDash([]);
+    }
   }
 
   // Rubber-band selection rectangle.

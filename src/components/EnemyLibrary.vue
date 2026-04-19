@@ -10,6 +10,7 @@ import { onMounted, ref, watch, nextTick } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { ENEMY_NAMES, ENEMY_DIM } from '@/rom/nesleveldef';
 import { ENEMY_DRAG_MIME } from '@/rom/item-categories';
+import { activeDrag, hideNativeDragImage } from '@/ui/drag-state';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { getFxForSlot } from '@/rom/level-layout';
@@ -63,6 +64,12 @@ function onDragStart(e: DragEvent, enemyId: number): void {
   if (!e.dataTransfer) return;
   e.dataTransfer.effectAllowed = 'copy';
   e.dataTransfer.setData(ENEMY_DRAG_MIME, JSON.stringify({ enemyId }));
+  hideNativeDragImage(e);
+  activeDrag.value = { kind: 'enemy', id: enemyId };
+}
+
+function onDragEnd(): void {
+  activeDrag.value = null;
 }
 
 function drawEnemy(el: unknown, eid: number): void {
@@ -122,6 +129,7 @@ function drawEnemy(el: unknown, eid: number): void {
                    hover:bg-panel-subtle transition-colors
                    border border-transparent hover:border-panel-border"
             @dragstart="(e) => onDragStart(e, eid)"
+            @dragend="onDragEnd"
           >
             <canvas
               v-if="atlasReady && spriteId(eid) !== null"

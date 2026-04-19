@@ -12,7 +12,7 @@
 import { computed, type DeepReadonly, readonly, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { ValidationSuccess } from '@/rom/validation';
-import type { EnemyMap, LevelBlock, LevelMap } from '@/rom/model';
+import type { EnemyBlock, EnemyMap, LevelBlock, LevelMap } from '@/rom/model';
 import { parseLevelMap } from '@/rom/level-parser';
 import { parseEnemyMap } from '@/rom/enemy-parser';
 import { slotLabel } from '@/rom/level-layout';
@@ -29,6 +29,21 @@ export const useRomStore = defineStore('rom', () => {
   /** The level block for the currently-selected slot, or null. */
   const activeBlock = computed<DeepReadonly<LevelBlock> | null>(() => {
     const map = levelMap.value;
+    if (!map) return null;
+    const idx = map.slotToBlock[activeSlot.value];
+    if (idx === undefined) return null;
+    return map.blocks[idx] ?? null;
+  });
+
+  /**
+   * The enemy block for the currently-selected slot, or null. Mirrors
+   * `activeBlock` — reads through the inner shallowRef (not the readonly
+   * wrapper exposed on the store), so commands can mutate it directly
+   * for editing. Exposing it here keeps the "write-through" contract
+   * consistent with item editing.
+   */
+  const activeEnemyBlock = computed<DeepReadonly<EnemyBlock> | null>(() => {
+    const map = enemyMap.value;
     if (!map) return null;
     const idx = map.slotToBlock[activeSlot.value];
     if (idx === undefined) return null;
@@ -65,6 +80,7 @@ export const useRomStore = defineStore('rom', () => {
     activeSlot: readonly(activeSlot),
     isLoaded,
     activeBlock,
+    activeEnemyBlock,
     activeSlotLabel,
     loadRom,
     selectSlot,

@@ -8,7 +8,7 @@
  *   - Delete/Backspace → DeleteItemCommand
  *   - Drag selected item → MoveItemCommand
  */
-import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
+import { ref, shallowRef, watch, onMounted, onUnmounted, computed } from 'vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
@@ -19,7 +19,7 @@ import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand } from '@/commands/tile-commands';
-import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
+import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
 import { activeDrag } from '@/ui/drag-state';
 import { renderItem } from '@/rom/item-renderer';
@@ -39,8 +39,26 @@ const rom = useRomStore();
 const history = useHistoryStore();
 const editor = useEditorStore();
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-const selectedItems = ref<LevelItem[]>([]);
-const selectedEnemy = ref<{ enemy: EnemyItem; pageIndex: number } | null>(null);
+// shallowRef — see comment on `selectedEnemies` below. Same reasoning:
+// ref() deep-proxies stored items, breaking reference identity against
+// the raw items iterated in draw and in command `indexOf()` lookups.
+// Without this, DeleteItemCommand.execute silently no-ops because
+// `this.block.items.indexOf(this.item)` returns -1.
+const selectedItems = shallowRef<LevelItem[]>([]);
+/**
+ * Enemy selection mirrors `selectedItems` — multi-select via shift/ctrl
+ * or rubber-band. Each entry carries its `pageIndex` because enemy
+ * bytes encode page-local coordinates and the page is direction-
+ * dependent. Selection uses REFERENCE equality on `enemy` — group
+ * moves mutate `enemy.x/y`, so coordinate-keyed lookups break.
+ */
+type EnemySelection = { enemy: EnemyItem; pageIndex: number };
+// shallowRef — critical: `ref()` would recursively wrap stored enemies
+// with reactive proxies, breaking reference identity against the raw
+// enemy objects we iterate over in the draw loop. The `Set.has()` call
+// in the selection-ring pass relies on that identity. shallowRef keeps
+// the array's top-level mutation reactive but leaves items untouched.
+const selectedEnemies = shallowRef<EnemySelection[]>([]);
 
 // Ghost position for drop preview.
 const ghostTile = ref<{ x: number; y: number } | null>(null);
@@ -53,6 +71,11 @@ const dragPreview = ref<{ dx: number; dy: number } | null>(null);
 // Resize state — active when the user grabbed a resize handle. Holds
 // the item being resized and the size we would commit on release.
 const resizePreview = ref<{ item: LevelItem; newSize: number } | null>(null);
+
+// Enemy drag preview — mirror of dragPreview but for the selected
+// enemy in enemy mode. Carries the (dx, dy) delta so the ghost renders
+// at the offset position while the mouse is held.
+const enemyDragPreview = ref<{ dx: number; dy: number } | null>(null);
 
 // Cursor style for the canvas — switches to `ew-resize` / `ns-resize`
 // when hovering a selected item's resize handle so the affordance is
@@ -88,22 +111,34 @@ function hitTestTile(tileX: number, tileY: number): LevelItem | null {
   return null;
 }
 
-function hitTestEnemy(tileX: number, tileY: number): { enemy: EnemyItem; pageIndex: number } | null {
+/**
+ * Absolute tile rect occupied by an enemy. Mirrors C++
+ * cneseditor_loader.cpp:119-129 position transform + multi-tile
+ * footprint from ENEMY_DIM (masking bit 7 per CNesItem::Enemy()
+ * `id & 0x7f`). Shared by hit-test, drag-hit, rubber-band, and draw.
+ */
+function enemyFootprint(
+  enemy: EnemyItem,
+  pageIndex: number,
+  isH: boolean,
+): { absX: number; absY: number; cx: number; cy: number } {
+  const absX = isH ? pageIndex * 16 + enemy.x : enemy.x;
+  const absY = isH ? enemy.y : pageIndex * 16 + enemy.y;
+  const szxy = ENEMY_DIM[enemy.id & 0x7f]?.[1] ?? 0xff;
+  const cx = szxy === 0xff ? 1 : Math.max(1, szxy & 0x0f);
+  const cy = szxy === 0xff ? 1 : Math.max(1, (szxy >> 4) & 0x0f);
+  return { absX, absY, cx, cy };
+}
+
+function hitTestEnemy(tileX: number, tileY: number): EnemySelection | null {
   const eb = getEnemyBlock();
   if (!eb) return null;
   const isH = block.value?.header.direction === 1;
   for (let pageIdx = 0; pageIdx < eb.pages.length; pageIdx++) {
     const page = eb.pages[pageIdx]!;
     for (const enemy of page.enemies) {
-      // Mirrors C++ cneseditor_loader.cpp:119-129.
-      const ex = isH ? pageIdx * 16 + enemy.x : enemy.x;
-      const ey = isH ? enemy.y : pageIdx * 16 + enemy.y;
-      // Consider the full multi-tile footprint (cx × cy). Mask bit 7
-      // (hidden-enemy flag) per C++ CNesItem::Enemy() `id & 0x7f`.
-      const szxy = ENEMY_DIM[enemy.id & 0x7f]?.[1] ?? 0xff;
-      const cx = szxy === 0xff ? 1 : Math.max(1, szxy & 0x0f);
-      const cy = szxy === 0xff ? 1 : Math.max(1, (szxy >> 4) & 0x0f);
-      if (tileX >= ex && tileX < ex + cx && tileY >= ey && tileY < ey + cy) {
+      const { absX, absY, cx, cy } = enemyFootprint(enemy, pageIdx, !!isH);
+      if (tileX >= absX && tileX < absX + cx && tileY >= absY && tileY < absY + cy) {
         return { enemy, pageIndex: pageIdx };
       }
     }
@@ -111,19 +146,34 @@ function hitTestEnemy(tileX: number, tileY: number): { enemy: EnemyItem; pageInd
   return null;
 }
 
+/** True when (tileX, tileY) falls inside any selected enemy's footprint. */
+function isInsideAnySelectedEnemy(tileX: number, tileY: number): boolean {
+  const isH = block.value?.header.direction === 1;
+  for (const sel of selectedEnemies.value) {
+    const { absX, absY, cx, cy } = enemyFootprint(sel.enemy, sel.pageIndex, !!isH);
+    if (tileX >= absX && tileX < absX + cx && tileY >= absY && tileY < absY + cy) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function getEnemyBlock(): EnemyBlock | null {
-  const map = rom.enemyMap;
-  if (!map) return null;
-  const idx = map.slotToBlock[rom.activeSlot];
-  if (idx === undefined) return null;
-  return (map.blocks[idx] as EnemyBlock) ?? null;
+  // `activeEnemyBlock` reads through the store's inner shallowRef (not
+  // the readonly wrapper exposed on the store surface), so mutations
+  // from commands propagate. Using `rom.enemyMap` directly would give a
+  // DeepReadonly object and silently drop writes.
+  return (rom.activeEnemyBlock as EnemyBlock) ?? null;
 }
 
 // ─── Drop from TileLibrary or EnemyLibrary ──────────────────────────
 
 function onDragOver(e: DragEvent): void {
   const types = e.dataTransfer?.types;
-  if (!types?.includes(DRAG_MIME) && !types?.includes(ENEMY_DRAG_MIME)) return;
+  const accept =
+    types?.includes(DRAG_MIME) ||
+    types?.includes(ENEMY_DRAG_MIME);
+  if (!accept) return;
   e.preventDefault();
   e.dataTransfer!.dropEffect = 'copy';
   const tile = tileFromEvent(e);
@@ -152,8 +202,13 @@ function onDrop(e: DragEvent): void {
     if (!eb) return;
     try {
       const payload = JSON.parse(enemyRaw) as { enemyId: number };
+      // Direction-aware page split: horizontal pages stack by X, vertical by Y.
+      const isH = block.value?.header.direction === 1;
+      const pageIndex = isH ? Math.floor(tile.x / 16) : Math.floor(tile.y / 16);
+      const localX = isH ? tile.x % 16 : tile.x;
+      const localY = isH ? tile.y : tile.y % 16;
       history.execute(
-        new PlaceEnemyCommand(eb, tile.x, tile.y, payload.enemyId, rom.activeSlot),
+        new PlaceEnemyCommand(eb, pageIndex, localX, localY, payload.enemyId, rom.activeSlot),
       );
     } catch { /* ignore bad payload */ }
     redraw();
@@ -225,33 +280,48 @@ function onMouseMove(e: MouseEvent): void {
   }
 
   if (!mouseDownPos || e.buttons !== 1) return;
-  if (editor.activeTool !== 'tiles') return;
-
   if (!pos) return;
 
-  // Resize drag — recompute target size from hover.
-  if (resizeTarget) {
-    const newSize = sizeFromHover(resizeTarget, pos.x, pos.y);
-    if (!resizePreview.value || resizePreview.value.newSize !== newSize) {
-      resizePreview.value = { item: resizeTarget, newSize };
-      redraw();
+  // Enemy mode: group-drag if mouseDown was inside any selected enemy's
+  // footprint; otherwise fall through to rubber-band.
+  if (editor.activeTool === 'enemies') {
+    if (isInsideAnySelectedEnemy(mouseDownPos.x, mouseDownPos.y)) {
+      const dx = pos.x - mouseDownPos.x;
+      const dy = pos.y - mouseDownPos.y;
+      if (
+        !enemyDragPreview.value ||
+        enemyDragPreview.value.dx !== dx ||
+        enemyDragPreview.value.dy !== dy
+      ) {
+        enemyDragPreview.value = { dx, dy };
+        redraw();
+      }
+      return;
     }
-    return;
+    // Fall through to rubber-band block below.
+  } else {
+    // Tile mode: resize handle or group move.
+    if (resizeTarget) {
+      const newSize = sizeFromHover(resizeTarget, pos.x, pos.y);
+      if (!resizePreview.value || resizePreview.value.newSize !== newSize) {
+        resizePreview.value = { item: resizeTarget, newSize };
+        redraw();
+      }
+      return;
+    }
+
+    if (selectedItems.value.some((it) => it.tileX === mouseDownPos!.x && it.tileY === mouseDownPos!.y)) {
+      const dx = pos.x - mouseDownPos.x;
+      const dy = pos.y - mouseDownPos.y;
+      if (!dragPreview.value || dragPreview.value.dx !== dx || dragPreview.value.dy !== dy) {
+        dragPreview.value = { dx, dy };
+        redraw();
+      }
+      return;
+    }
   }
 
-  // If dragging from a selected item → will be a group move on mouseUp.
-  // Keep a live ghost at the hover offset so the user sees where items land.
-  if (selectedItems.value.some((it) => it.tileX === mouseDownPos!.x && it.tileY === mouseDownPos!.y)) {
-    const dx = pos.x - mouseDownPos.x;
-    const dy = pos.y - mouseDownPos.y;
-    if (!dragPreview.value || dragPreview.value.dx !== dx || dragPreview.value.dy !== dy) {
-      dragPreview.value = { dx, dy };
-      redraw();
-    }
-    return;
-  }
-
-  // Rubber-band: drag from empty space
+  // Rubber-band: drag from empty space (tile OR enemy mode).
   isDraggingSelection = true;
   rubberBand.value = {
     x1: Math.min(mouseDownPos.x, pos.x),
@@ -292,9 +362,98 @@ function onMouseUp(e: MouseEvent): void {
 
   // ─── Enemy mode ────────────────────────────────────────────────
   if (editor.activeTool === 'enemies') {
+    const isH = block.value?.header.direction === 1;
+
+    // Group drag-to-move release: commit if any non-zero offset and
+    // mouseDown landed inside a selected footprint.
+    const edp = enemyDragPreview.value;
+    if (edp && (edp.dx !== 0 || edp.dy !== 0) && selectedEnemies.value.length > 0) {
+      const eb = getEnemyBlock();
+      if (eb) {
+        if (selectedEnemies.value.length === 1) {
+          const sel = selectedEnemies.value[0]!;
+          const oldAbsX = isH ? sel.pageIndex * 16 + sel.enemy.x : sel.enemy.x;
+          const oldAbsY = isH ? sel.enemy.y : sel.pageIndex * 16 + sel.enemy.y;
+          const newAbsX = oldAbsX + edp.dx;
+          const newAbsY = oldAbsY + edp.dy;
+          if (newAbsX >= 0 && newAbsY >= 0) {
+            const newPageIndex = isH ? Math.floor(newAbsX / 16) : Math.floor(newAbsY / 16);
+            const newLocalX = isH ? newAbsX % 16 : newAbsX;
+            const newLocalY = isH ? newAbsY : newAbsY % 16;
+            history.execute(
+              new MoveEnemyCommand(
+                eb, sel.enemy, sel.pageIndex,
+                newPageIndex, newLocalX, newLocalY,
+                rom.activeSlot,
+              ),
+            );
+            selectedEnemies.value = [{ enemy: sel.enemy, pageIndex: newPageIndex }];
+          }
+        } else {
+          const cmd = new MoveEnemiesCommand(
+            eb, selectedEnemies.value, edp.dx, edp.dy, !!isH, rom.activeSlot,
+          );
+          if (!cmd.wasRejected) {
+            history.execute(cmd);
+            selectedEnemies.value = selectedEnemies.value.map((s, i) => ({
+              enemy: s.enemy,
+              pageIndex: cmd.getNewPage(i),
+            }));
+          }
+        }
+      }
+      enemyDragPreview.value = null;
+      mouseDownPos = null;
+      redraw();
+      return;
+    }
+
+    // Rubber-band release: select every enemy whose footprint intersects rb.
+    if (isDraggingSelection && rubberBand.value) {
+      const rb = rubberBand.value;
+      const eb = getEnemyBlock();
+      const hits: EnemySelection[] = [];
+      if (eb) {
+        for (let pageIdx = 0; pageIdx < eb.pages.length; pageIdx++) {
+          for (const enemy of eb.pages[pageIdx]!.enemies) {
+            const { absX, absY, cx, cy } = enemyFootprint(enemy, pageIdx, !!isH);
+            const overlaps =
+              absX + cx - 1 >= rb.x1 && absX <= rb.x2 &&
+              absY + cy - 1 >= rb.y1 && absY <= rb.y2;
+            if (overlaps) hits.push({ enemy, pageIndex: pageIdx });
+          }
+        }
+      }
+      selectedEnemies.value = hits;
+      selectedItems.value = [];
+      rubberBand.value = null;
+      isDraggingSelection = false;
+      enemyDragPreview.value = null;
+      mouseDownPos = null;
+      redraw();
+      return;
+    }
+
+    // Click-to-select (with shift/ctrl modifiers).
     const hitE = hitTestEnemy(upPos.x, upPos.y);
-    selectedEnemy.value = hitE;
+    if (e.shiftKey && hitE) {
+      if (!selectedEnemies.value.some((s) => s.enemy === hitE.enemy)) {
+        selectedEnemies.value = [...selectedEnemies.value, hitE];
+      }
+    } else if (e.ctrlKey || e.metaKey) {
+      if (hitE) {
+        const idx = selectedEnemies.value.findIndex((s) => s.enemy === hitE.enemy);
+        if (idx !== -1) {
+          selectedEnemies.value = selectedEnemies.value.filter((_, i) => i !== idx);
+        } else {
+          selectedEnemies.value = [...selectedEnemies.value, hitE];
+        }
+      }
+    } else {
+      selectedEnemies.value = hitE ? [hitE] : [];
+    }
     selectedItems.value = [];
+    enemyDragPreview.value = null;
     mouseDownPos = null;
     redraw();
     return;
@@ -312,7 +471,7 @@ function onMouseUp(e: MouseEvent): void {
       );
       selectedItems.value = hits;
     }
-    selectedEnemy.value = null;
+    selectedEnemies.value = [];
     rubberBand.value = null;
     isDraggingSelection = false;
     mouseDownPos = null;
@@ -371,7 +530,7 @@ function onMouseUp(e: MouseEvent): void {
     // Plain click: single select
     selectedItems.value = hit ? [hit] : [];
   }
-  selectedEnemy.value = null;
+  selectedEnemies.value = [];
   mouseDownPos = null;
   redraw();
 }
@@ -382,14 +541,20 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault();
 
-    // Delete selected enemy?
-    if (selectedEnemy.value) {
+    // Delete selected enemies (single or multi).
+    const enemies = selectedEnemies.value;
+    if (enemies.length > 0) {
       const eb = getEnemyBlock();
       if (eb) {
-        history.execute(
-          new DeleteEnemyCommand(eb, selectedEnemy.value.pageIndex, selectedEnemy.value.enemy, rom.activeSlot),
-        );
-        selectedEnemy.value = null;
+        if (enemies.length === 1) {
+          const sel = enemies[0]!;
+          history.execute(
+            new DeleteEnemyCommand(eb, sel.pageIndex, sel.enemy, rom.activeSlot),
+          );
+        } else {
+          history.execute(new DeleteEnemiesCommand(eb, enemies, rom.activeSlot));
+        }
+        selectedEnemies.value = [];
         redraw();
       }
       return;
@@ -626,57 +791,103 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   // Then DrawCanvas calls Draw(eColor, ...) → bmTpl[eColor] = one of
   // 5.bmp/6.bmp/7.bmp/9.bmp. Atlas 3 (9.bmp) is used for worlds/palettes
   // that need it — notably for bosses like Wart and Fryguy.
+  // Helper: blit an enemy's multi-tile sprite from its atlas at a tile
+  // position. Returns the footprint (cx × cy) so callers can draw rings
+  // or bounding boxes. Mirrors C++ SetCanvasEnemyItem expansion.
+  function blitEnemyAt(
+    atlasSrc: HTMLImageElement,
+    enemyId: number,
+    tileX: number,
+    tileY: number,
+  ): { cx: number; cy: number } | null {
+    const lookupId = enemyId & 0x7f;
+    const dim = ENEMY_DIM[lookupId];
+    if (!dim || dim[1] === 0xff) return null;
+    const spriteId = dim[0]!;
+    const szxy = dim[1]!;
+    const cx = szxy & 0x0f;
+    const cy = (szxy >> 4) & 0x0f;
+    if (cx === 0 || cy === 0) return null;
+    for (let iy = 0; iy < cy; iy++) {
+      for (let ix = 0; ix < cx; ix++) {
+        const tid = spriteId + (ix | (iy << 4));
+        const { sx, sy } = metatileRect(tid);
+        ctx.drawImage(
+          atlasSrc, sx, sy, METATILE_SIZE, METATILE_SIZE,
+          (tileX + ix) * TILE_PX, (tileY + iy) * TILE_PX, TILE_PX, TILE_PX,
+        );
+      }
+    }
+    return { cx, cy };
+  }
+
   if (editor.showEnemies) {
     const enemyBlock = getEnemyBlock();
     const enemyAtlasIdx = 3 - (b.header.enemyColor & 0x03);
     const enemyAtlasSrc = getAtlasImage(enemyAtlasIdx);
+    // During a drag, skip the solid render of every selected enemy so
+    // only the ghost (rendered below) is visible. Sets give O(1) lookup.
+    const edp = enemyDragPreview.value;
+    const enemyDragActive = edp && (edp.dx !== 0 || edp.dy !== 0);
+    const skipSet = new Set<EnemyItem>();
+    if (enemyDragActive) {
+      for (const s of selectedEnemies.value) skipSet.add(s.enemy);
+    }
+    const selectedSet = new Set<EnemyItem>();
+    for (const s of selectedEnemies.value) selectedSet.add(s.enemy);
+
     if (enemyBlock && enemyAtlasSrc) {
       const isH = b.header.direction === 1;
       for (let pageIdx = 0; pageIdx < enemyBlock.pages.length; pageIdx++) {
         const page = enemyBlock.pages[pageIdx]!;
         for (const enemy of page.enemies) {
-          // C++ cneseditor_loader.cpp:119-129 enemy position transform.
-          const absX = isH ? pageIdx * 16 + enemy.x : enemy.x;
-          const absY = isH ? enemy.y : pageIdx * 16 + enemy.y;
-          const ex = absX * TILE_PX;
-          const ey = absY * TILE_PX;
-          // C++ CNesItem::Enemy() returns `id & 0x7f` — bit 7 is the
-          // "hidden enemy" flag (spawn-from-jar). Strip it before the
-          // sprite lookup so bosses stored as 0x80|id (e.g. Wart = 0xAC,
-          // Mouser, Clawglip, Triclyde) still find their ENEMY_DIM entry.
-          const lookupId = enemy.id & 0x7f;
-          const dim = ENEMY_DIM[lookupId];
-          const spriteId = dim?.[0];
-          const szxy = dim?.[1] ?? 0xff;
-          const cx = szxy === 0xff ? 0 : (szxy & 0x0f);
-          const cy = szxy === 0xff ? 0 : ((szxy >> 4) & 0x0f);
-          if (spriteId !== undefined && szxy !== 0xff && cx > 0 && cy > 0) {
-            // C++ SetCanvasEnemyItem: expand into cx × cy tiles,
-            // each tile = baseSpriteId + (ix | (iy << 4)).
-            for (let iy = 0; iy < cy; iy++) {
-              for (let ix = 0; ix < cx; ix++) {
-                const tid = spriteId + (ix | (iy << 4));
-                const { sx, sy } = metatileRect(tid);
-                ctx.drawImage(
-                  enemyAtlasSrc, sx, sy, METATILE_SIZE, METATILE_SIZE,
-                  ex + ix * TILE_PX, ey + iy * TILE_PX, TILE_PX, TILE_PX,
-                );
-              }
-            }
-          } else {
+          if (skipSet.has(enemy)) continue;
+          const { absX, absY } = enemyFootprint(enemy, pageIdx, isH);
+          const footprint = blitEnemyAt(enemyAtlasSrc, enemy.id, absX, absY);
+          if (!footprint) {
             ctx.fillStyle = 'rgba(255,80,80,0.6)';
-            ctx.fillRect(ex + 1, ey + 1, TILE_PX - 2, TILE_PX - 2);
+            ctx.fillRect(absX * TILE_PX + 1, absY * TILE_PX + 1, TILE_PX - 2, TILE_PX - 2);
           }
-          // Selection ring covers the full enemy footprint.
-          if (selectedEnemy.value?.enemy === enemy) {
-            const w = cx > 0 ? cx * TILE_PX : TILE_PX;
-            const h = cy > 0 ? cy * TILE_PX : TILE_PX;
+          if (selectedSet.has(enemy)) {
+            const cx = footprint?.cx ?? 1;
+            const cy = footprint?.cy ?? 1;
             ctx.strokeStyle = '#ff4444';
             ctx.lineWidth = 2;
-            ctx.strokeRect(ex, ey, w, h);
+            ctx.strokeRect(absX * TILE_PX, absY * TILE_PX, cx * TILE_PX, cy * TILE_PX);
           }
         }
       }
+    }
+
+    // Group ghost preview — one alpha wrap around the whole loop so the
+    // blend cost is paid once for N enemies.
+    if (enemyDragActive && selectedEnemies.value.length > 0 && enemyAtlasSrc) {
+      const isH = b.header.direction === 1;
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      const boxes: { absX: number; absY: number; cx: number; cy: number }[] = [];
+      for (const sel of selectedEnemies.value) {
+        const { absX: origAbsX, absY: origAbsY } = enemyFootprint(sel.enemy, sel.pageIndex, isH);
+        const newAbsX = origAbsX + edp.dx;
+        const newAbsY = origAbsY + edp.dy;
+        const fp = blitEnemyAt(enemyAtlasSrc, sel.enemy.id, newAbsX, newAbsY);
+        boxes.push({
+          absX: newAbsX, absY: newAbsY,
+          cx: fp?.cx ?? 1, cy: fp?.cy ?? 1,
+        });
+      }
+      ctx.restore();
+
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 2]);
+      for (const box of boxes) {
+        ctx.strokeRect(
+          box.absX * TILE_PX + 0.5, box.absY * TILE_PX + 0.5,
+          box.cx * TILE_PX - 1, box.cy * TILE_PX - 1,
+        );
+      }
+      ctx.setLineDash([]);
     }
   }
 
@@ -754,9 +965,15 @@ function redraw(): void {
   draw(canvas, b);
 }
 
-// Clear selection when switching levels.
+// Clear selection state when switching levels. Skipping the enemy side
+// leaked a stale enemy reference into the new slot, which any mouseDown
+// inside its (phantom) footprint would capture as a drag instead of
+// falling through to click-to-select.
 watch(() => rom.activeSlot, () => {
   selectedItems.value = [];
+  selectedEnemies.value = [];
+  enemyDragPreview.value = null;
+  dragPreview.value = null;
   redraw();
 });
 watch(() => history.revision, redraw);
@@ -770,11 +987,12 @@ const dprMedia = window.matchMedia(
 );
 onMounted(() => dprMedia.addEventListener('change', redraw));
 onUnmounted(() => dprMedia.removeEventListener('change', redraw));
+
 </script>
 
 <template>
   <div
-    class="relative h-full overflow-auto bg-[#111]"
+    class="relative h-full overflow-auto bg-[#111] outline-none"
     tabindex="0"
     @keydown="onKeyDown"
   >

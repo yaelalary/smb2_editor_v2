@@ -4,7 +4,7 @@
  * shared with other slots. Explains the sharing in natural language
  * and offers a "Make independent" button.
  */
-import { computed } from 'vue';
+import { computed, toRaw } from 'vue';
 import BaseButton from './common/BaseButton.vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
@@ -46,10 +46,12 @@ const isVisible = computed(() => {
 function detach(): void {
   const map = rom.enemyMap;
   if (!map) return;
-  // Cast strips Pinia's DeepReadonly — the command needs mutable access.
+  // `rom.enemyMap` is wrapped with `readonly()` at the store surface,
+  // which would block the command's mutation of blocks/slotToBlock.
+  // `toRaw` unwraps the proxy to the underlying EnemyMap object.
   history.execute(
     new DetachEnemyBlockCommand(
-      map as unknown as import('@/rom/model').EnemyMap,
+      toRaw(map) as unknown as import('@/rom/model').EnemyMap,
       rom.activeSlot,
     ),
   );

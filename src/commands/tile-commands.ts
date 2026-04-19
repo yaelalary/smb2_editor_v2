@@ -190,6 +190,44 @@ export class MoveItemsCommand implements Command {
   }
 }
 
+/**
+ * Resize an extended item by updating its size nibble (low 4 bits of
+ * itemId). Bypasses sourceBytes — the constructive serializer uses the
+ * live `itemId` when re-encoding.
+ */
+export class ResizeItemCommand implements Command {
+  readonly label: string;
+  readonly targetSlot?: number;
+
+  private readonly block: Mutable<LevelBlock>;
+  private readonly item: Mutable<LevelItem>;
+  private readonly oldItemId: number;
+  private readonly newItemId: number;
+
+  constructor(
+    block: LevelBlock,
+    item: LevelItem,
+    newSize: number,
+    targetSlot?: number,
+  ) {
+    this.block = block as Mutable<LevelBlock>;
+    this.item = item as Mutable<LevelItem>;
+    this.oldItemId = item.itemId;
+    this.newItemId = (item.itemId & 0xf0) | (newSize & 0x0f);
+    this.targetSlot = targetSlot;
+    this.label = `Resize item to ${newSize + 1} tiles`;
+  }
+
+  execute(): void {
+    this.item.itemId = this.newItemId;
+    this.block.isEdited = true;
+  }
+
+  undo(): void {
+    this.item.itemId = this.oldItemId;
+  }
+}
+
 export class MoveItemCommand implements Command {
   readonly label: string;
   readonly targetSlot?: number;

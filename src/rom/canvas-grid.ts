@@ -127,6 +127,26 @@ export class CanvasGrid {
   }
 
   /**
+   * Copy this grid's cells into a brand-new grid with the same dims.
+   * Used by the ghost-preview pipeline: the caller clones the real
+   * grid, stamps its preview items into the clone, and diffs the two
+   * so only ghost-affected cells blit at alpha.
+   */
+  clone(): CanvasGrid {
+    const out = new CanvasGrid(this.width, this.height, this.fx, this.gfx, this.isH);
+    for (let i = 0; i < this.cells.length; i++) {
+      const src = this.cells[i]!;
+      const dst = out.cells[i]!;
+      dst.visible = src.visible;
+      dst.tileId = src.tileId;
+      dst.type = src.type;
+      dst.regularId = src.regularId;
+      dst.groundType = src.groundType;
+    }
+    return out;
+  }
+
+  /**
    * Unconditional write — bypasses priority check. For tests and for the
    * ground pass when we need to guarantee a cell is stamped (matches the
    * first-writer-wins behavior of ground over an empty cell).

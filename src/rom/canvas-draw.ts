@@ -50,3 +50,52 @@ export function drawCanvas(
     }
   }
 }
+
+/**
+ * Draw only cells where `ghost` differs from `base` — used to blit the
+ * drag/resize preview at alpha over the already-rendered main grid.
+ * The caller sets `ctx.globalAlpha` before calling. Cells where the
+ * ghost placement was priority-rejected are identical to base and thus
+ * skipped, which is what we want: the ghost shouldn't show where the
+ * real placement wouldn't land either.
+ */
+export function drawCanvasDiff(
+  ctx: CanvasRenderingContext2D,
+  ghost: CanvasGrid,
+  base: CanvasGrid,
+  palette: LevelPalette | null,
+): void {
+  if (!palette) return;
+  const itemAtlas = getColorizedAtlas(ghost.fx + 4, palette);
+  const bgAtlas = getColorizedBgAtlas(ghost.gfx, palette);
+
+  for (let cy = 0; cy < ghost.height; cy++) {
+    for (let cx = 0; cx < ghost.width; cx++) {
+      const g = ghost.getItem(cx, cy);
+      const b = base.getItem(cx, cy);
+      if (
+        g.visible === b.visible &&
+        g.tileId === b.tileId &&
+        g.type === b.type
+      ) continue;
+      if (!g.visible) continue;
+      if (g.tileId === 0xff) continue;
+
+      if (g.type !== 0) {
+        if (!bgAtlas) continue;
+        const { sx, sy } = bgTileRect(g.tileId);
+        ctx.drawImage(
+          bgAtlas, sx, sy, METATILE_SIZE, METATILE_SIZE,
+          cx * METATILE_SIZE, cy * METATILE_SIZE, METATILE_SIZE, METATILE_SIZE,
+        );
+      } else {
+        if (!itemAtlas) continue;
+        const { sx, sy } = metatileRect(g.tileId);
+        ctx.drawImage(
+          itemAtlas, sx, sy, METATILE_SIZE, METATILE_SIZE,
+          cx * METATILE_SIZE, cy * METATILE_SIZE, METATILE_SIZE, METATILE_SIZE,
+        );
+      }
+    }
+  }
+}

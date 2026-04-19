@@ -18,12 +18,13 @@ import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
-import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand } from '@/commands/tile-commands';
+import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand } from '@/commands/enemy-commands';
+import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
 import { renderItem } from '@/rom/item-renderer';
 import { CanvasGrid } from '@/rom/canvas-grid';
 import { computeGroundSegments, groundPass } from '@/rom/ground-pass';
-import { drawCanvas } from '@/rom/canvas-draw';
+import { drawCanvas, drawCanvasDiff } from '@/rom/canvas-draw';
 import {
   getAtlasImage,
   metatileRect,
@@ -47,6 +48,15 @@ const ghostTile = ref<{ x: number; y: number } | null>(null);
 // copy at the current hover tile so the user sees the landing position
 // before releasing. `dx/dy` is the delta from each item's original anchor.
 const dragPreview = ref<{ dx: number; dy: number } | null>(null);
+
+// Resize state — active when the user grabbed a resize handle. Holds
+// the item being resized and the size we would commit on release.
+const resizePreview = ref<{ item: LevelItem; newSize: number } | null>(null);
+
+// Cursor style for the canvas — switches to `ew-resize` / `ns-resize`
+// when hovering a selected item's resize handle so the affordance is
+// immediately readable.
+const hoverCursor = ref<'default' | 'ew-resize' | 'ns-resize'>('default');
 
 // Rubber-band selection rectangle (tile coordinates).
 const rubberBand = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
@@ -167,20 +177,65 @@ function onDrop(e: DragEvent): void {
 
 let mouseDownPos: { x: number; y: number } | null = null;
 let isDraggingSelection = false;
+// Non-null while the user is dragging a resize handle. We don't re-use
+// mouseDownPos-based detection because handles sit just outside the
+// item's selection ring and require their own dispatch.
+let resizeTarget: LevelItem | null = null;
+
+/** Find a selected extended item whose handle sits at (x, y), if any. */
+function hitTestHandle(tileX: number, tileY: number): LevelItem | null {
+  for (const item of selectedItems.value) {
+    if (!isResizable(item.itemId)) continue;
+    const h = handlePosition(item);
+    if (h.x === tileX && h.y === tileY) return item;
+  }
+  return null;
+}
 
 function onMouseDown(e: MouseEvent): void {
   if (e.button !== 0) return;
   mouseDownPos = tileFromEvent(e);
   isDraggingSelection = false;
   rubberBand.value = null;
+
+  // Resize-handle grab takes precedence over body click (a handle can
+  // overlap neighbouring tiles and we want the drag to be resize, not
+  // a move from the handle's cell).
+  if (mouseDownPos && editor.activeTool === 'tiles') {
+    const hit = hitTestHandle(mouseDownPos.x, mouseDownPos.y);
+    if (hit) {
+      resizeTarget = hit;
+      resizePreview.value = { item: hit, newSize: hit.itemId & 0x0f };
+    }
+  }
 }
 
 function onMouseMove(e: MouseEvent): void {
+  const pos = tileFromEvent(e);
+
+  // Hover affordance for resize handles (no button pressed).
+  if (e.buttons === 0 && pos && editor.activeTool === 'tiles') {
+    const hover = hitTestHandle(pos.x, pos.y);
+    const next: typeof hoverCursor.value = hover
+      ? resizeAxis(hover.itemId) === 'vertical' ? 'ns-resize' : 'ew-resize'
+      : 'default';
+    if (hoverCursor.value !== next) hoverCursor.value = next;
+  }
+
   if (!mouseDownPos || e.buttons !== 1) return;
   if (editor.activeTool !== 'tiles') return;
 
-  const pos = tileFromEvent(e);
   if (!pos) return;
+
+  // Resize drag — recompute target size from hover.
+  if (resizeTarget) {
+    const newSize = sizeFromHover(resizeTarget, pos.x, pos.y);
+    if (!resizePreview.value || resizePreview.value.newSize !== newSize) {
+      resizePreview.value = { item: resizeTarget, newSize };
+      redraw();
+    }
+    return;
+  }
 
   // If dragging from a selected item → will be a group move on mouseUp.
   // Keep a live ghost at the hover offset so the user sees where items land.
@@ -215,6 +270,23 @@ function onMouseUp(e: MouseEvent): void {
   }
 
   const moved = upPos.x !== mouseDownPos.x || upPos.y !== mouseDownPos.y;
+
+  // ─── Tile mode: resize-handle release ──────────────────────────
+  if (resizeTarget && resizePreview.value) {
+    const target = resizeTarget;
+    const newSize = resizePreview.value.newSize;
+    const b = block.value;
+    if (b && newSize !== (target.itemId & 0x0f)) {
+      history.execute(
+        new ResizeItemCommand(b, target, newSize, rom.activeSlot),
+      );
+    }
+    resizeTarget = null;
+    resizePreview.value = null;
+    mouseDownPos = null;
+    redraw();
+    return;
+  }
 
   // ─── Enemy mode ────────────────────────────────────────────────
   if (editor.activeTool === 'enemies') {
@@ -414,10 +486,24 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     const fx = getFxForSlot(rom.activeSlot);
     const gfx = getWorldGfx(romData.rom, world);
 
+    // Preview state gates: when a drag or resize is active, we exclude
+    // the affected items from the MAIN render and show them only as a
+    // ghost overlay at their new pos/size. Previously we left the
+    // original solid AND drew the ghost — that looked like duplication,
+    // especially on tall items like vines.
+    const dp = dragPreview.value;
+    const rp = resizePreview.value;
+    const dragActive = dp && (dp.dx !== 0 || dp.dy !== 0);
+    const resizeActive = rp && rp.newSize !== (rp.item.itemId & 0x0f);
+    const excluded = new Set<LevelItem>();
+    if (dragActive) for (const it of selectedItems.value) excluded.add(it);
+    if (resizeActive) excluded.add(rp.item);
+
     const grid = new CanvasGrid(widthTiles, heightTiles, fx, gfx, isH);
     const segments = computeGroundSegments(b);
     groundPass(grid, romData.rom, world, segments);
     for (const item of b.items) {
+      if (excluded.has(item)) continue;
       renderItem(grid, item, romData.rom, rom.activeSlot, b.header);
     }
     drawCanvas(ctx, grid, palette);
@@ -434,37 +520,78 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
     }
 
-    // Drag preview — render selected items at their offset-applied
-    // position into a throwaway grid, then blit with alpha so the user
-    // sees where items will land before releasing.
-    const dp = dragPreview.value;
-    if (dp && (dp.dx !== 0 || dp.dy !== 0)) {
-      const ghostGrid = new CanvasGrid(widthTiles, heightTiles, fx, gfx, isH);
-      for (const src of selectedItems.value) {
-        if (src.tileX < 0 || src.tileY < 0) continue;
+    // ── Ghost overlay (drag-move + resize) ───────────────────────
+    //
+    // `grid` already excludes the preview items, so it doubles as the
+    // base for the diff. We clone it, stamp the preview items at their
+    // new pos/size, and blit only the diff at alpha. This means:
+    //   - live blockers (ground, clouds, other vines) stop vine ghosts
+    //     correctly during the drag
+    //   - priority-rejected placements show nothing (user sees it won't
+    //     land)
+    //   - no "duplicate" perception — the original is gone while the
+    //     drag is in progress
+    if (dragActive || resizeActive) {
+      const ghostGrid = grid.clone();
+      if (dragActive) {
+        for (const src of selectedItems.value) {
+          if (src.tileX < 0 || src.tileY < 0) continue;
+          const previewItem: LevelItem = {
+            ...src,
+            tileX: src.tileX + dp.dx,
+            tileY: src.tileY + dp.dy,
+          } as LevelItem;
+          renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);
+        }
+      }
+      if (resizeActive) {
         const previewItem: LevelItem = {
-          ...src,
-          tileX: src.tileX + dp.dx,
-          tileY: src.tileY + dp.dy,
+          ...rp.item,
+          itemId: withSize(rp.item.itemId, rp.newSize),
         } as LevelItem;
         renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);
       }
+
       ctx.save();
       ctx.globalAlpha = 0.55;
-      drawCanvas(ctx, ghostGrid, palette);
+      drawCanvasDiff(ctx, ghostGrid, grid, palette);
       ctx.restore();
 
-      // Outline around the new anchor(s) so the drop target is obvious.
-      ctx.strokeStyle = '#ffcc00';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 2]);
-      for (const src of selectedItems.value) {
-        if (src.tileX < 0 || src.tileY < 0) continue;
-        const gx = src.tileX + dp.dx;
-        const gy = src.tileY + dp.dy;
-        ctx.strokeRect(gx * TILE_PX + 0.5, gy * TILE_PX + 0.5, TILE_PX - 1, TILE_PX - 1);
+      // Dashed outline at each new anchor so the drop target is obvious
+      // even when the ghost is mostly transparent.
+      if (dragActive) {
+        ctx.strokeStyle = '#ffcc00';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 2]);
+        for (const src of selectedItems.value) {
+          if (src.tileX < 0 || src.tileY < 0) continue;
+          const gx = src.tileX + dp.dx;
+          const gy = src.tileY + dp.dy;
+          ctx.strokeRect(gx * TILE_PX + 0.5, gy * TILE_PX + 0.5, TILE_PX - 1, TILE_PX - 1);
+        }
+        ctx.setLineDash([]);
       }
-      ctx.setLineDash([]);
+    }
+
+    // Resize handles — yellow squares at the end of each selected
+    // extended item's footprint. If a resize is in progress, the handle
+    // tracks the preview size so the user sees the pull point.
+    for (const item of selectedItems.value) {
+      if (!isResizable(item.itemId)) continue;
+      const previewItem =
+        rp && rp.item === item
+          ? ({ ...item, itemId: withSize(item.itemId, rp.newSize) } as LevelItem)
+          : item;
+      const h = handlePosition(previewItem);
+      const hx = h.x * TILE_PX + TILE_PX / 2;
+      const hy = h.y * TILE_PX + TILE_PX / 2;
+      ctx.fillStyle = '#ffcc00';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
     }
   }
 
@@ -600,6 +727,7 @@ onUnmounted(() => dprMedia.removeEventListener('change', redraw));
     <canvas
       ref="canvasRef"
       class="block [image-rendering:pixelated]"
+      :style="{ cursor: hoverCursor }"
       @dragover="onDragOver"
       @dragleave="onDragLeave"
       @drop="onDrop"

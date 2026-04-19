@@ -53,11 +53,22 @@ function enemyName(id: number): string {
   return ENEMY_NAMES[id] ?? `Enemy #${id}`;
 }
 
-function spriteId(id: number): number | null {
+interface EnemyFootprint {
+  spriteId: number;
+  cx: number;
+  cy: number;
+}
+
+function enemyFootprint(id: number): EnemyFootprint | null {
   const dim = ENEMY_DIM[id];
   if (!dim) return null;
-  const s = dim[0];
-  return s !== undefined && s !== 0xff ? s : null;
+  const sid = dim[0];
+  const szxy = dim[1];
+  if (sid === undefined || sid === 0xff || szxy === undefined || szxy === 0xff) return null;
+  const cx = szxy & 0x0f;
+  const cy = (szxy >> 4) & 0x0f;
+  if (cx === 0 || cy === 0) return null;
+  return { spriteId: sid, cx, cy };
 }
 
 function onDragStart(e: DragEvent, enemyId: number): void {
@@ -72,31 +83,49 @@ function onDragEnd(): void {
   activeDrag.value = null;
 }
 
+// Fit the preview inside a 32×32 CSS box, proportional. A 1×1 enemy
+// renders at 32px (2× zoom); a 3×2 enemy renders at 32×~21px.
+const PREVIEW_MAX_PX = 32;
+
 function drawEnemy(el: unknown, eid: number): void {
   if (!el) return;
   const canvas = el as HTMLCanvasElement;
   // Enemies use the raw overworld atlas (0-2) — no palette colorization.
+  // Matches C++ `Draw(eColor, ...)` which blits from masked bmTpl[0..3].
   const atlasIdx = Math.min(getFxForSlot(rom.activeSlot), 2);
   const src = getAtlasImage(atlasIdx);
 
   void drawGeneration.value;
 
-  const key = `${eid}:${atlasIdx}`;
+  const fp = enemyFootprint(eid);
+  if (!fp) return;
+
+  const key = `${eid}:${atlasIdx}:${fp.cx}x${fp.cy}`;
   if (canvas.dataset['drawn'] === key) return;
 
-  canvas.width = METATILE_SIZE;
-  canvas.height = METATILE_SIZE;
-  canvas.style.width = '24px';
-  canvas.style.height = '24px';
+  const w = fp.cx * METATILE_SIZE;
+  const h = fp.cy * METATILE_SIZE;
+  canvas.width = w;
+  canvas.height = h;
+
+  const scale = PREVIEW_MAX_PX / Math.max(w, h);
+  canvas.style.width = `${w * scale}px`;
+  canvas.style.height = `${h * scale}px`;
   canvas.style.imageRendering = 'pixelated';
+
   const ctx = canvas.getContext('2d');
   if (!ctx || !src) return;
-
-  ctx.clearRect(0, 0, METATILE_SIZE, METATILE_SIZE);
-  const sid = spriteId(eid);
-  if (sid === null) return;
-  const { sx, sy } = metatileRect(sid);
-  ctx.drawImage(src, sx, sy, METATILE_SIZE, METATILE_SIZE, 0, 0, METATILE_SIZE, METATILE_SIZE);
+  ctx.clearRect(0, 0, w, h);
+  for (let iy = 0; iy < fp.cy; iy++) {
+    for (let ix = 0; ix < fp.cx; ix++) {
+      const tid = fp.spriteId + (ix | (iy << 4));
+      const { sx, sy } = metatileRect(tid);
+      ctx.drawImage(
+        src, sx, sy, METATILE_SIZE, METATILE_SIZE,
+        ix * METATILE_SIZE, iy * METATILE_SIZE, METATILE_SIZE, METATILE_SIZE,
+      );
+    }
+  }
   canvas.dataset['drawn'] = key;
 }
 </script>
@@ -132,7 +161,7 @@ function drawEnemy(el: unknown, eid: number): void {
             @dragend="onDragEnd"
           >
             <canvas
-              v-if="atlasReady && spriteId(eid) !== null"
+              v-if="atlasReady && enemyFootprint(eid) !== null"
               :key="`${eid}-${drawGeneration}`"
               :ref="(el) => drawEnemy(el, eid)"
               class="shrink-0 bg-black/20 rounded-sm"

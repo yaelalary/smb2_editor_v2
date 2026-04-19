@@ -24,6 +24,23 @@ function makeRegularItemBytes(itemId: number): Uint8Array {
   return new Uint8Array([0x00, itemId & 0xff]);
 }
 
+/**
+ * Library drag-drop sends the UI-facing item index (0..60). The model
+ * (parser, `renderItem`, serializer) works in **ROM-byte** space where
+ * variable-size items occupy 0x30..0xFF with the high nibble encoding
+ * the vid and the low nibble the size. The UI range 48..60 maps 1:1 to
+ * vid 0..12 via `0x30 + (idx − 48) * 0x10` with default size = 0. Items
+ * 0..47 are fixed and need no remapping.
+ *
+ * Without this conversion, `renderItem` interprets e.g. library idx 58
+ * (Red Wood Platform) as ROM byte 0x3A = vid 0 size 10, and dispatches
+ * to `renderHorzGround` producing 11 X-Block tiles.
+ */
+export function libraryIdToRomByte(libraryId: number): number {
+  if (libraryId < 48 || libraryId > 60) return libraryId;
+  return 0x30 + (libraryId - 48) * 0x10;
+}
+
 export class PlaceTileCommand implements Command {
   readonly label: string;
   readonly targetSlot?: number;
@@ -36,10 +53,11 @@ export class PlaceTileCommand implements Command {
     block: LevelBlock,
     tileX: number,
     tileY: number,
-    itemId: number,
+    libraryId: number,
     targetSlot?: number,
   ) {
     this.block = block as Mutable<LevelBlock>;
+    const itemId = libraryIdToRomByte(libraryId);
     this.newItem = {
       kind: 'regular',
       sourceBytes: makeRegularItemBytes(itemId),

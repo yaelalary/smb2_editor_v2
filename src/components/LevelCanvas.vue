@@ -18,7 +18,7 @@ import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
-import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand } from '@/commands/tile-commands';
+import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
 import { activeDrag } from '@/ui/drag-state';
@@ -817,12 +817,13 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
         renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);
       }
       if (libItemActive) {
+        const romByte = libraryIdToRomByte(libDrag.id);
         const previewItem: LevelItem = {
           kind: 'regular',
-          itemId: libDrag.id,
+          itemId: romByte,
           tileX: libDragTile.x,
           tileY: libDragTile.y,
-          sourceBytes: new Uint8Array([0, libDrag.id & 0xff]),
+          sourceBytes: new Uint8Array([0, romByte & 0xff]),
           sourceRange: [0, 0],
         } as LevelItem;
         renderItem(ghostGrid, previewItem, romData.rom, rom.activeSlot, b.header);

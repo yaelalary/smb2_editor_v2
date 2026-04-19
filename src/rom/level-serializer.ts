@@ -122,121 +122,127 @@ function serializeConservative(block: SerializableLevelBlock): Uint8Array {
 }
 
 /**
- * Re-encode the ENTIRE item stream from absolute positions. This is
- * used when the block has been edited (items added, removed, or moved).
+ * Re-encode items from their absolute tileX/tileY positions while
+ * preserving the ORIGINAL stream order of meta items (groundSet,
+ * groundType, pointer). These meta items are cursor-state-dependent:
+ *   - groundSet.startPos is computed from the cursor deltaX/deltaY at
+ *     the stream point they appear (see `computeGroundSegments` in
+ *     ground-pass.ts).
+ *   - pointer items (door links) similarly carry implicit stream
+ *     context used elsewhere in the tool.
+ * Grouping them at the start would collapse every ground transition and
+ * door link to (0, 0), breaking the level.
  *
  * Strategy:
- *   1. Separate visible items (regular/entrance with positions) from
- *      meta items (groundSet, groundType — preserved in original order).
- *   2. Sort visible items by page (tileX / 16), then Y, then X.
- *   3. Encode each item with the appropriate cursor deltas, inserting
- *      backToStart (0xF4) and skipper (0xF2/0xF3) meta items as needed.
- *   4. Intersperse preserved meta items at the start of each page.
- */
-/**
- * Re-encode items from their absolute tileX/tileY positions. Used for
- * edited blocks (items added, deleted, or moved).
+ *   1. Walk items in their ORIGINAL stream order.
+ *   2. Drop original skipper (0xF2/0xF3) and backToStart (0xF4) — we
+ *      regenerate them based on cursor moves needed between regulars.
+ *   3. For regular/entrance items: compute cursor-target from current
+ *      absolute tileX/tileY (direction-aware), emit skippers as needed,
+ *      then emit the position byte + id.
+ *   4. For meta items (groundSet, groundType, pointer, unknown): emit
+ *      sourceBytes verbatim. Do NOT modify cursor state — these items
+ *      read cursor state, they don't advance it.
  *
- * Strategy (simple and deterministic):
- *   - Meta items (groundSet, groundType, pointer) are emitted first,
- *     preserving their original sourceBytes.
- *   - Visible items are sorted by page → Y → X.
- *   - For each page transition: emit backToStart (0xF4) + skippers
- *     (0xF2/0xF3) to reach the target page. This resets cursorY to 0.
- *   - For Y advancement within a page: iy = targetY - cursorY (always
- *     0..14 after a page reset, so no unwanted Y-wrap occurs).
- *   - Position byte = (iy << 4) | localX.
- *
- * This encoding may use more bytes than the original (extra meta items
- * for page jumps), but is always correct. The budget check in buildRom
- * ensures the total fits.
+ * Direction-aware math (cneseditor_loader.cpp:57):
+ *   horizontal:  tileX = deltaX + ix,  tileY = deltaY
+ *   vertical:    tileX = ix,           tileY = deltaY + 15*(deltaX/16)
+ * The cursor's `deltaX` advances by 16 per skipper in both directions.
+ * In vertical levels it represents "how many vertical pages deep" × 16.
  */
 function serializeConstructive(block: SerializableLevelBlock): Uint8Array {
   const headerBytes = packLevelHeader(block.header);
-
-  const visible: LevelItem[] = [];
-  const meta: LevelItem[] = [];
-  for (const item of block.items) {
-    if (
-      (item.kind === 'regular' || item.kind === 'entrance') &&
-      item.tileX >= 0 &&
-      item.tileY >= 0
-    ) {
-      visible.push(item);
-    } else if (
-      item.kind === 'groundSet' ||
-      item.kind === 'groundType' ||
-      item.kind === 'pointer'
-    ) {
-      meta.push(item);
-    }
-    // skipper / backToStart are regenerated — don't copy originals.
-  }
-
-  visible.sort((a, b) => {
-    const pageA = Math.floor(a.tileX / 16);
-    const pageB = Math.floor(b.tileX / 16);
-    if (pageA !== pageB) return pageA - pageB;
-    if (a.tileY !== b.tileY) return a.tileY - b.tileY;
-    return (a.tileX % 16) - (b.tileX % 16);
-  });
+  const isH = block.header.direction === 1;
 
   const bytes: number[] = [];
+  let deltaX = 0;
+  let deltaY = 0;
 
-  // Emit meta items at the start.
-  for (const m of meta) {
-    for (let i = 0; i < m.sourceBytes.byteLength; i++) {
-      bytes.push(m.sourceBytes[i]!);
+  /** Advance the cursor forward to (targetDeltaX, ≤targetDeltaY) via skippers. */
+  function advanceCursorTo(targetDeltaX: number, targetDeltaY: number): void {
+    // Y rewind within same page, or cursor is past target → backToStart.
+    if (deltaX > targetDeltaX || (deltaX === targetDeltaX && deltaY > targetDeltaY)) {
+      bytes.push(0xf4); // backToStart
+      deltaX = 0;
+      deltaY = 0;
+    }
+    // Skip forward by pages (F3 = +32, F2 = +16). Skipper resets deltaY to 0.
+    while (deltaX + 32 <= targetDeltaX) {
+      bytes.push(0xf3);
+      deltaX += 32;
+      deltaY = 0;
+    }
+    while (deltaX < targetDeltaX) {
+      bytes.push(0xf2);
+      deltaX += 16;
+      deltaY = 0;
     }
   }
 
-  // Encode visible items with explicit page management.
-  let cursorPage = 0;
-  let cursorY = 0;
+  for (const item of block.items) {
+    switch (item.kind) {
+      case 'skipper':
+      case 'backToStart':
+        // Regenerated on demand — drop original.
+        continue;
 
-  for (const item of visible) {
-    const targetPage = Math.floor(item.tileX / 16);
-    const targetLocalX = item.tileX % 16;
-    const targetY = item.tileY;
+      case 'groundSet':
+      case 'groundType':
+      case 'pointer':
+      case 'unknown':
+        // Stream-order meta items. Emit verbatim at their original
+        // stream position so the cursor state they observe is stable.
+        for (let i = 0; i < item.sourceBytes.byteLength; i++) {
+          bytes.push(item.sourceBytes[i]!);
+        }
+        continue;
 
-    // Page transition or Y-rewind needed?
-    if (targetPage !== cursorPage || targetY < cursorY) {
-      bytes.push(0xf4); // backToStart → resets cursor to page 0, Y 0
-      cursorPage = 0;
-      cursorY = 0;
+      case 'regular':
+      case 'entrance': {
+        if (item.tileX < 0 || item.tileY < 0) continue;
 
-      // Skip to target page.
-      let toSkip = targetPage;
-      while (toSkip >= 2) {
-        bytes.push(0xf3);
-        cursorPage += 2;
-        toSkip -= 2;
+        // Resolve the cursor target for this item based on direction.
+        let targetDeltaX: number;
+        let targetDeltaY: number;
+        let localX: number;
+        if (isH) {
+          // Horizontal: deltaX is the page left-edge, ix is within page,
+          // deltaY IS tileY. pages are 16 wide.
+          targetDeltaX = Math.floor(item.tileX / 16) * 16;
+          targetDeltaY = item.tileY;
+          localX = item.tileX % 16;
+        } else {
+          // Vertical: deltaX advances per vertical page (+16 per skipper).
+          // tileY = deltaY + 15*(deltaX/16) → page = floor(tileY / 15).
+          const page = Math.floor(item.tileY / 15);
+          targetDeltaX = page * 16;
+          targetDeltaY = item.tileY - 15 * page;
+          localX = item.tileX & 0x0f;
+        }
+
+        advanceCursorTo(targetDeltaX, targetDeltaY);
+
+        const iy = targetDeltaY - deltaY;
+        const positionByte = ((iy & 0x0f) << 4) | (localX & 0x0f);
+        bytes.push(positionByte);
+        bytes.push(item.itemId & 0xff);
+
+        // Entrance extra param bytes (destination pointer, etc.).
+        if (item.kind === 'entrance' && item.sourceBytes.byteLength > 2) {
+          for (let i = 2; i < item.sourceBytes.byteLength; i++) {
+            bytes.push(item.sourceBytes[i]!);
+          }
+        }
+
+        // Update cursor per C++ loader rule: deltaY += iy, then if it
+        // reached 15 it wraps to 0 and deltaX advances by 16.
+        deltaY += iy;
+        if (deltaY >= 15) {
+          deltaY = (deltaY + 1) % 16;
+          deltaX += 16;
+        }
+        continue;
       }
-      if (toSkip >= 1) {
-        bytes.push(0xf2);
-        cursorPage += 1;
-      }
-    }
-
-    // Y delta — always >= 0 and < 15 after a page reset.
-    const iy = targetY - cursorY;
-
-    const positionByte = ((iy & 0x0f) << 4) | (targetLocalX & 0x0f);
-    bytes.push(positionByte);
-    bytes.push(item.itemId & 0xff);
-
-    // Entrance items may have extra parameter bytes (4 or 5 byte total).
-    if (item.kind === 'entrance' && item.sourceBytes.byteLength > 2) {
-      for (let i = 2; i < item.sourceBytes.byteLength; i++) {
-        bytes.push(item.sourceBytes[i]!);
-      }
-    }
-
-    // Update cursor Y.
-    cursorY += iy;
-    if (cursorY >= 15) {
-      cursorY = (cursorY + 1) % 16;
-      cursorPage += 1;
     }
   }
 

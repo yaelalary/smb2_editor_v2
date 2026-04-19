@@ -31,58 +31,24 @@ export interface GroundSegment {
  * initial ground at startPos=0.
  */
 export function computeGroundSegments(b: LevelBlock): GroundSegment[] {
-  const isH = b.header.direction === 1;
   const segments: GroundSegment[] = [];
   let currentGroundType = b.header.groundType;
   segments.push({ startPos: 0, groundSet: b.header.groundSet, groundType: currentGroundType });
 
-  let deltaX = 0;
-  let deltaY = 0;
-  let lastGroundPos = 0;
-
+  // `absoluteStartPos` is cached on each groundSet at parse time; see
+  // populateAbsolutePositions in level-parser.ts. Reading it directly
+  // (rather than recomputing from cursor) means editor-side moves of
+  // regulars can't visually shift the ground segments.
   for (const item of b.items) {
-    switch (item.kind) {
-      case 'skipper': {
-        const lowNibble = (item.sourceBytes[0] ?? 0) & 0x0f;
-        deltaY = 0;
-        deltaX += (lowNibble - 1) * 0x10;
-        break;
-      }
-      case 'backToStart':
-        deltaX = 0;
-        deltaY = 0;
-        break;
-      case 'regular':
-      case 'entrance': {
-        const byte0 = item.sourceBytes[0] ?? 0;
-        const iy = (byte0 >> 4) & 0x0f;
-        deltaY += iy;
-        if (deltaY >= 0x0f) {
-          deltaY = (deltaY + 1) % 16;
-          deltaX += 0x10;
-        }
-        break;
-      }
-      case 'groundSet': {
-        const byte0 = item.sourceBytes[0] ?? 0;
-        const byte1 = item.sourceBytes[1] ?? 0;
-        const gSet = byte1 & 0x1f;
-        const reserved = byte0 & 0x0f;
-        let pos: number;
-        if (isH) {
-          pos = deltaX + 8 * reserved + Math.floor(byte1 / 0x20);
-          if (pos <= lastGroundPos) pos = lastGroundPos + 1;
-        } else {
-          pos = 0x0f * Math.floor(deltaX / 0x10) + 8 * reserved + Math.floor(byte1 / 0x20);
-          if (pos <= lastGroundPos) pos = lastGroundPos + 1;
-        }
-        lastGroundPos = pos;
-        segments.push({ startPos: pos, groundSet: gSet, groundType: currentGroundType });
-        break;
-      }
-      case 'groundType':
-        currentGroundType = (item.sourceBytes[1] ?? 0) & 0x07;
-        break;
+    if (item.kind === 'groundType') {
+      currentGroundType = (item.sourceBytes[1] ?? 0) & 0x07;
+    } else if (item.kind === 'groundSet') {
+      const gSet = (item.sourceBytes[1] ?? 0) & 0x1f;
+      segments.push({
+        startPos: item.absoluteStartPos ?? 0,
+        groundSet: gSet,
+        groundType: currentGroundType,
+      });
     }
   }
   return segments;

@@ -3,9 +3,13 @@
  *
  * Walks the grid once; for each visible cell, picks the atlas based on
  * `type !== 0` (BG strip, `gfx+10` in C++ bmTpl indexing) vs `type === 0`
- * (item atlas, `fx+4`). Invisible cells and cells with tileId=0xFF are
- * skipped — the initial bgColor fill shows through, matching the C++
- * behavior where magenta atlas pixels reveal the palette bg.
+ * (item atlas, `fx+4`). Invisible cells are skipped. For the item atlas
+ * branch, tileId=0xFF is also skipped — that's the "no-render" sentinel
+ * used by ITEM_DIM entries. For the BG atlas, 0xFF is a real tile index
+ * (the last column of the 4096×16 strip) that the NES may render as a
+ * solid-color tile (e.g., the "deep cave" black under a ground segment),
+ * so we blit it like any other BG cell — mirroring C++ DrawGrGamma which
+ * does not skip 0xFF.
  */
 
 import type { CanvasGrid } from './canvas-grid';
@@ -22,7 +26,6 @@ export function drawCanvas(
 ): void {
   if (!palette) return;
 
-  // Atlases are shared across the whole pass — look up once.
   const itemAtlas = getColorizedAtlas(grid.fx + 4, palette);
   const bgAtlas = getColorizedBgAtlas(grid.gfx, palette);
 
@@ -30,7 +33,6 @@ export function drawCanvas(
     for (let cx = 0; cx < grid.width; cx++) {
       const cell = grid.getItem(cx, cy);
       if (!cell.visible) continue;
-      if (cell.tileId === 0xff) continue; // invisible-solid sentinel
 
       if (cell.type !== 0) {
         if (!bgAtlas) continue;
@@ -41,6 +43,7 @@ export function drawCanvas(
         );
       } else {
         if (!itemAtlas) continue;
+        if (cell.tileId === 0xff) continue; // ITEM_DIM "no-render" sentinel
         const { sx, sy } = metatileRect(cell.tileId);
         ctx.drawImage(
           itemAtlas, sx, sy, METATILE_SIZE, METATILE_SIZE,
@@ -79,7 +82,6 @@ export function drawCanvasDiff(
         g.type === b.type
       ) continue;
       if (!g.visible) continue;
-      if (g.tileId === 0xff) continue;
 
       if (g.type !== 0) {
         if (!bgAtlas) continue;
@@ -90,6 +92,7 @@ export function drawCanvasDiff(
         );
       } else {
         if (!itemAtlas) continue;
+        if (g.tileId === 0xff) continue;
         const { sx, sy } = metatileRect(g.tileId);
         ctx.drawImage(
           itemAtlas, sx, sy, METATILE_SIZE, METATILE_SIZE,

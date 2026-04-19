@@ -18,6 +18,7 @@ import LevelCanvas from './components/LevelCanvas.vue';
 import PropertiesPanel from './components/PropertiesPanel.vue';
 import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
+import GroundPanel from './components/GroundPanel.vue';
 import LevelLinksEditor from './components/LevelLinksEditor.vue';
 import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
 import MemoryBudgetIndicator from './components/MemoryBudgetIndicator.vue';
@@ -255,8 +256,8 @@ function onDownload(): void {
     <!-- Desktop: ROM loaded → three-panel editor layout. -->
     <div
       v-else
-      class="hidden lg:grid h-screen"
-      style="grid-template-columns: var(--spacing-panel-library) 1fr var(--spacing-panel-properties); grid-template-rows: var(--spacing-toolbar-height) 1fr;"
+      class="hidden lg:grid h-screen overflow-hidden"
+      style="grid-template-columns: var(--spacing-panel-library) minmax(0, 1fr) var(--spacing-panel-properties); grid-template-rows: var(--spacing-toolbar-height) 1fr;"
     >
       <!-- Top bar -->
       <header
@@ -351,6 +352,17 @@ function onDownload(): void {
           <button
             :class="[
               'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
+              editor.activeTool === 'ground'
+                ? 'bg-panel text-ink border-b-2 border-accent'
+                : 'text-ink-muted hover:text-ink',
+            ]"
+            @click="editor.activeTool = 'ground'"
+          >
+            Ground
+          </button>
+          <button
+            :class="[
+              'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
               editor.activeTool === 'links'
                 ? 'bg-panel text-ink border-b-2 border-accent'
                 : 'text-ink-muted hover:text-ink',
@@ -367,6 +379,10 @@ function onDownload(): void {
         />
         <EnemyLibrary
           v-else-if="editor.activeTool === 'enemies'"
+          class="min-h-0 overflow-hidden"
+        />
+        <GroundPanel
+          v-else-if="editor.activeTool === 'ground'"
           class="min-h-0 overflow-hidden"
         />
         <LevelLinksEditor

@@ -282,6 +282,9 @@ function onMouseMove(e: MouseEvent): void {
   if (!mouseDownPos || e.buttons !== 1) return;
   if (!pos) return;
 
+  // Ground mode: no drag/rubber-band — the panel owns editing. Early return.
+  if (editor.activeTool === 'ground') return;
+
   // Enemy mode: group-drag if mouseDown was inside any selected enemy's
   // footprint; otherwise fall through to rubber-band.
   if (editor.activeTool === 'enemies') {
@@ -342,6 +345,26 @@ function onMouseUp(e: MouseEvent): void {
   }
 
   const moved = upPos.x !== mouseDownPos.x || upPos.y !== mouseDownPos.y;
+
+  // ─── Ground mode: click picks the segment under the cursor ─────
+  if (editor.activeTool === 'ground') {
+    const b = block.value;
+    if (b) {
+      const isH = b.header.direction === 1;
+      const clickPos = isH ? upPos.x : upPos.y;
+      const groundStream = b.items.filter((it) => it.kind === 'groundSet');
+      // Walk stream groundSets — the last one whose startPos ≤ clickPos wins.
+      // If none matches, the header segment (startPos=0) covers this tile.
+      let hit: LevelItem | null = null;
+      for (const gi of groundStream) {
+        if ((gi.absoluteStartPos ?? 0) <= clickPos) hit = gi;
+      }
+      editor.selectedGroundSegment = hit ?? 'header';
+    }
+    mouseDownPos = null;
+    redraw();
+    return;
+  }
 
   // ─── Tile mode: resize-handle release ──────────────────────────
   if (resizeTarget && resizePreview.value) {
@@ -674,6 +697,76 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       renderItem(grid, item, romData.rom, rom.activeSlot, b.header);
     }
     drawCanvas(ctx, grid, palette);
+
+    // ── Ground mode overlay ──────────────────────────────────────
+    // When the Ground tool is active, draw a faint boundary line at
+    // each stream segment's startPos and highlight the selected one.
+    // Labels mark segment #. No canvas interaction beyond click-to-select.
+    if (editor.activeTool === 'ground') {
+      const groundStream = b.items.filter((it) => it.kind === 'groundSet');
+      const selectedGround = editor.selectedGroundSegment;
+      // Header-highlight band at the very start.
+      const isHeaderSelected = selectedGround === 'header';
+      if (isHeaderSelected) {
+        ctx.fillStyle = 'rgba(102, 224, 255, 0.08)';
+        const firstStreamPos = groundStream[0]?.absoluteStartPos ?? (isH ? widthTiles : heightTiles);
+        if (isH) ctx.fillRect(0, 0, firstStreamPos * TILE_PX, cssH);
+        else ctx.fillRect(0, 0, cssW, firstStreamPos * TILE_PX);
+      }
+      // Draw each stream segment boundary + highlight if selected.
+      for (let i = 0; i < groundStream.length; i++) {
+        const gi = groundStream[i]!;
+        const pos = gi.absoluteStartPos ?? 0;
+        const isSel = selectedGround === gi;
+        if (isSel) {
+          const next = groundStream[i + 1]?.absoluteStartPos ?? (isH ? widthTiles : heightTiles);
+          ctx.fillStyle = 'rgba(102, 224, 255, 0.12)';
+          if (isH) ctx.fillRect(pos * TILE_PX, 0, (next - pos) * TILE_PX, cssH);
+          else ctx.fillRect(0, pos * TILE_PX, cssW, (next - pos) * TILE_PX);
+        }
+        // Boundary line.
+        ctx.strokeStyle = isSel ? '#66e0ff' : 'rgba(102, 224, 255, 0.55)';
+        ctx.lineWidth = isSel ? 2 : 1;
+        if (!isSel) ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        if (isH) {
+          ctx.moveTo(pos * TILE_PX + 0.5, 0);
+          ctx.lineTo(pos * TILE_PX + 0.5, cssH);
+        } else {
+          ctx.moveTo(0, pos * TILE_PX + 0.5);
+          ctx.lineTo(cssW, pos * TILE_PX + 0.5);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Label — small chip with the zone number near the top/left of
+        // the boundary. Numbering matches GroundPanel's 1-based "Zone N"
+        // where the header (idx 0 in `zones`) = Zone 1 and stream zones
+        // start at Zone 2 (i + 2 here since `i` indexes `groundStream`).
+        const labelText = `Zone ${i + 2}`;
+        ctx.font = 'bold 10px monospace';
+        const metrics = ctx.measureText(labelText);
+        const padX = 4, padY = 2;
+        const lw = metrics.width + padX * 2;
+        const lh = 12;
+        const lx = isH ? pos * TILE_PX + 4 : 4;
+        const ly = isH ? 4 : pos * TILE_PX + 4;
+        ctx.fillStyle = '#66e0ff';
+        ctx.fillRect(lx, ly, lw, lh);
+        ctx.fillStyle = '#000';
+        ctx.textBaseline = 'top';
+        ctx.fillText(labelText, lx + padX, ly + padY);
+      }
+      // Label the header zone at the very start — it's Zone 1 in the panel.
+      const headerLabel = 'Zone 1';
+      ctx.font = 'bold 10px monospace';
+      const hm = ctx.measureText(headerLabel);
+      const hlw = hm.width + 8;
+      ctx.fillStyle = isHeaderSelected ? '#66e0ff' : 'rgba(102, 224, 255, 0.7)';
+      ctx.fillRect(4, 4, hlw, 12);
+      ctx.fillStyle = '#000';
+      ctx.textBaseline = 'top';
+      ctx.fillText(headerLabel, 8, 6);
+    }
 
     // Selection rings — drawn as a single-tile box at the item anchor.
     // Multi-tile items show a small ring at the anchor; the full footprint

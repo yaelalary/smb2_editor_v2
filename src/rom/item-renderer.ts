@@ -192,11 +192,13 @@ function renderVertGround(
     vid = rawId;
     size = 0x0f * Math.floor((posY + 0x0f) / 0x0f) - posY;
   }
-  const tileId = getObjTile(rom, vid, world, objectType);
-  emit(grid, tileId, posX, posY, regularId, 4);
+  const bodyTile = getObjTile(rom, vid, world, objectType);
   for (let i = 1; i <= size; i++) {
-    emit(grid, tileId, posX, posY + i, regularId, 4);
+    emit(grid, bodyTile, posX, posY + i, regularId, 4);
   }
+  // clvldraw_worker.cpp:417-419 — "except for 0x06 object. Up of this object has 0x9f tile!"
+  const topTile = vid === 0x06 ? 0x9f : bodyTile;
+  emit(grid, topTile, posX, posY, regularId, 4);
 }
 
 function renderSpecialRegular(

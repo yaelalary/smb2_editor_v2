@@ -139,12 +139,18 @@ export async function preloadAllAtlases(): Promise<void> {
 
 // ─── Palette colorization (UseGamma port) ──────────────────────────
 //
-// Atlas pixels are palette-indexed grayscale: R=G=B, where
-// paletteIndex = Math.floor(gray / 0x10). Index 0-15 maps to one of
-// the level's 16 NES palette colors. Magenta (alpha=0) is transparent.
+// Direct port of `CLvlDraw::UseGamma` (clvldraw_render.cpp:300-355).
+// For every atlas pixel:
+//   clrf  = B | (G<<8) | (R<<16)          // little-endian DWORD, matches x86
+//   index = floor(clrf / 0x101010)         // clamped to 15
+//   output = palette[index]
+// Pixels that were MAGENTA (0xFF 0x00 0xFF) in the source BMP have
+// already been marked alpha=0 by `scripts/convert-metatile-atlases.ts`
+// — they stay transparent.
 //
-// This mirrors the C++ UseGamma() function which creates bmGammaTpl
-// by remapping each template pixel through the palette lookup table.
+// This matches C++ exactly: the source BMPs are *not* grayscale but
+// pre-colored, and each distinct source color maps to a specific NES
+// palette slot via the `clrf / 0x101010` formula.
 
 import type { LevelPalette } from '@/rom/palette-reader';
 
@@ -192,29 +198,18 @@ export function getColorizedAtlas(
     lut.push(palette.colors[i] ?? [0, 0, 0]);
   }
 
-  // Remap every pixel
+  // Remap every pixel via C++ UseGamma formula.
   for (let i = 0; i < data.length; i += 4) {
-    const a = data[i + 3]!;
-    if (a === 0) continue; // transparent → keep
-
+    if (data[i + 3] === 0) continue; // magenta → already transparent
     const r = data[i]!;
     const g = data[i + 1]!;
     const b = data[i + 2]!;
-
-    // Grayscale check: R≈G≈B (allow small tolerance for rounding)
-    if (Math.abs(r - g) <= 1 && Math.abs(g - b) <= 1) {
-      const idx = Math.min(Math.floor(r / 0x10), 15);
-      const color = lut[idx]!;
-      data[i] = color[0];
-      data[i + 1] = color[1];
-      data[i + 2] = color[2];
-      // alpha stays 255
-    }
-    // Non-grayscale pixels (like the yellow checkerboard) → make transparent
-    // since they represent empty/unused areas of the atlas
-    else {
-      data[i + 3] = 0;
-    }
+    const clrf = (r << 16) | (g << 8) | b;
+    const idx = Math.min(Math.floor(clrf / 0x101010), 15);
+    const color = lut[idx]!;
+    data[i] = color[0];
+    data[i + 1] = color[1];
+    data[i + 2] = color[2];
   }
 
   ctx.putImageData(imgData, 0, 0);
@@ -255,20 +250,16 @@ export function getColorizedBgAtlas(
   }
 
   for (let i = 0; i < data.length; i += 4) {
-    const a = data[i + 3]!;
-    if (a === 0) continue;
+    if (data[i + 3] === 0) continue;
     const r = data[i]!;
     const g = data[i + 1]!;
     const b = data[i + 2]!;
-    if (Math.abs(r - g) <= 1 && Math.abs(g - b) <= 1) {
-      const idx = Math.min(Math.floor(r / 0x10), 15);
-      const color = lut[idx]!;
-      data[i] = color[0];
-      data[i + 1] = color[1];
-      data[i + 2] = color[2];
-    } else {
-      data[i + 3] = 0;
-    }
+    const clrf = (r << 16) | (g << 8) | b;
+    const idx = Math.min(Math.floor(clrf / 0x101010), 15);
+    const color = lut[idx]!;
+    data[i] = color[0];
+    data[i + 1] = color[1];
+    data[i + 2] = color[2];
   }
 
   ctx.putImageData(imgData, 0, 0);

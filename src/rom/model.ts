@@ -58,6 +58,14 @@ export interface LevelItem {
    * items). Stored separately from sourceBytes for editing convenience.
    */
   itemId: number;
+  /**
+   * Absolute start position on the travel axis (column for horizontal
+   * levels, row for vertical). Only set for `groundSet` items; cached
+   * at parse time so editor-side ground edits persist across edits of
+   * surrounding stream items. The constructive serializer re-encodes
+   * the byte pair from this value — see `serializeConstructive`.
+   */
+  absoluteStartPos?: number;
 }
 
 /**

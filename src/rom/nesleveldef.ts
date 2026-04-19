@@ -380,6 +380,26 @@ export const GROUND_TYPE_V: readonly (readonly (readonly [number, number, number
   /* fx 3 */ [gd(0x164849FF), gd(0x171713FF), gd(0x49484BFF), gd(0x4B4B2DFF), gd(0x4B4B33FF), gd(0x4B4B13FF), gd(0x4A4A49FF), gd(0x484849FF)],
 ];
 
+/** Human-readable label for a ground preset (0..31). */
+export function groundPatternLabel(groundSet: number): string {
+  switch (groundSet) {
+    case 0: return '1 row';
+    case 1: return '2 rows';
+    case 2: return '3 rows';
+    case 3: return '4 rows';
+    case 4: return '5 rows';
+    case 5: return '6 rows';
+    case 6: return 'Tall';
+    case 7: return 'Full';
+    case 8: return 'Hole';
+    case 9: return 'Stripes';
+    case 10: return 'Columns';
+    case 11: return 'Short col.';
+    case 12: return 'Single col.';
+    default: return `Pattern ${groundSet}`;
+  }
+}
+
 /**
  * Horizontal ground set bitmasks (32 entries).
  * Each DWORD is a 32-bit bitmask controlling which rows of a page
@@ -510,42 +530,57 @@ export function getPriorityEntry(rawId: number): PriorityEntry {
 //                     nesleveldef.cpp:1425 g_mvbgPriority)
 // ────────────────────────────────────────────────────────────────────
 //
-// Indexed by (fx * 8 + groundType). Each DWORD literal unpacks big-endian
-// into [gr0, gr1, gr2, gr3] via gd(). The `bitset` index (0..3) — taken
-// from `3 & type` of a ground cell — picks the gr byte. When that byte
-// is non-zero, the BG_PRIOR macro returns truthy and the tile on the
-// losing side is rejected by SetCanvasItem.
+// Indexed by (fx * 8 + groundType). In C++ these are DWORD literals
+// read through a `union { DWORD; BYTE gr[4]; }` — on x86 little-endian,
+// gr[0] is the LSB byte of the DWORD. The `bitset` index (0..3) picks
+// gr[bitset]. When that byte is non-zero, the BG_PRIOR macro returns
+// truthy and the losing side is rejected by SetCanvasItem.
+//
+// IMPORTANT: our `gd()` helper returns bytes MSB-first (to preserve
+// visual tile ordering for other tables). BG_PRIOR needs LSB-first to
+// match C++'s in-memory byte layout. Using `gd_le()` here — the bitset
+// index then maps correctly (gr[0] = LSB of DWORD literal, etc.).
+
+/** Little-endian byte split — matches how C++ `gr.gr[i]` reads DWORDs. */
+function gd_le(dw: number): readonly [number, number, number, number] {
+  return [
+    dw & 0xFF,
+    (dw >>> 8) & 0xFF,
+    (dw >>> 16) & 0xFF,
+    (dw >>> 24) & 0xFF,
+  ];
+}
 
 /** Horizontal bg-priority table (32 entries). */
 export const BG_PRIORITY_H: readonly (readonly [number, number, number, number])[] = [
   // fx: 00
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
   // fx: 01
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
   // fx: 02
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
   // fx: 03
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
 ];
 
 /** Vertical bg-priority table (32 entries). */
 export const BG_PRIORITY_V: readonly (readonly [number, number, number, number])[] = [
   // fx: 00
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
   // fx: 01
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
   // fx: 02
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
   // fx: 03
-  gd(0x01010100), gd(0x00010100), gd(0x01010100), gd(0x01010100),
-  gd(0x01010100), gd(0x01010100), gd(0x01010100), gd(0x01010100),
+  gd_le(0x01010100), gd_le(0x00010100), gd_le(0x01010100), gd_le(0x01010100),
+  gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100), gd_le(0x01010100),
 ];
 
 /**

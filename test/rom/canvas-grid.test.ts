@@ -95,20 +95,24 @@ describe('bgPrior (BG_PRIOR macro port)', () => {
     expect(bgPrior(0x29, 3, 3, 7, false)).toBe(0);
   });
 
-  it('returns 1 for horizontal tables (all 0x01010100) at bitsets 0-2, 0 at bitset 3', () => {
-    // vine rawId 0x0c → bgPriority=1
-    expect(bgPrior(0x0c, 0, 0, 0, true)).toBe(1);
+  it('horizontal tables (all 0x01010100) reject at bitsets 1-3, allow at bitset 0', () => {
+    // vine rawId 0x0c → bgPriority=1. C++ union reads gr[0]=LSB, so
+    // 0x01010100 maps to [0x00, 0x01, 0x01, 0x01] indexed by bitset.
+    expect(bgPrior(0x0c, 0, 0, 0, true)).toBe(0);
     expect(bgPrior(0x0c, 1, 0, 0, true)).toBe(1);
     expect(bgPrior(0x0c, 2, 0, 0, true)).toBe(1);
-    expect(bgPrior(0x0c, 3, 0, 0, true)).toBe(0);
+    expect(bgPrior(0x0c, 3, 0, 0, true)).toBe(1);
   });
 
-  it('returns 0 for vertical fx=3 grtype=1 bitset=0 (only C++ exception)', () => {
+  it('vertical fx=3 grtype=1 has 0x00010100 → reject only at bitsets 1-2', () => {
+    // Only vertical exception entry: 0x00010100 → [0x00, 0x01, 0x01, 0x00].
     expect(bgPrior(0x0c, 0, 3, 1, false)).toBe(0);
-    // Neighbour cells still 1 (to verify we didn't corrupt other entries)
     expect(bgPrior(0x0c, 1, 3, 1, false)).toBe(1);
-    expect(bgPrior(0x0c, 0, 3, 0, false)).toBe(1);
-    expect(bgPrior(0x0c, 0, 2, 1, false)).toBe(1);
+    expect(bgPrior(0x0c, 2, 3, 1, false)).toBe(1);
+    expect(bgPrior(0x0c, 3, 3, 1, false)).toBe(0);
+    // Neighbour entries remain standard 0x01010100.
+    expect(bgPrior(0x0c, 3, 3, 0, false)).toBe(1);
+    expect(bgPrior(0x0c, 3, 2, 1, false)).toBe(1);
   });
 });
 

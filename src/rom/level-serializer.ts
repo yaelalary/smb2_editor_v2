@@ -186,16 +186,66 @@ function serializeConstructive(block: SerializableLevelBlock): Uint8Array {
         // Regenerated on demand — drop original.
         continue;
 
-      case 'groundSet':
       case 'groundType':
       case 'pointer':
       case 'unknown':
-        // Stream-order meta items. Emit verbatim at their original
-        // stream position so the cursor state they observe is stable.
+        // Non-positional meta items: emit verbatim.
         for (let i = 0; i < item.sourceBytes.byteLength; i++) {
           bytes.push(item.sourceBytes[i]!);
         }
         continue;
+
+      case 'groundSet': {
+        // Re-encode byte0/byte1 from the cached absoluteStartPos so
+        // the parser on reload reproduces the user's intended position.
+        //
+        // CRITICAL: byte0 for a groundSet is 0xF0 or 0xF1 — low nibble
+        // must be 0 or 1 (the high bit of the 4-bit offset). The rest
+        // of the offset (bits 0-2) lives in byte1 bits 5-7. Any other
+        // value of byte0 gets mis-classified by the parser as skipper/
+        // backToStart/pointer/groundType and the stream goes out of
+        // sync — garbage items appear in random places.
+        //
+        // Encodable diff per groundSet = 0..15 from current cursor.
+        // For anything larger we emit skippers first.
+        const target = item.absoluteStartPos;
+        if (target === undefined) {
+          for (let i = 0; i < item.sourceBytes.byteLength; i++) {
+            bytes.push(item.sourceBytes[i]!);
+          }
+          continue;
+        }
+        const gSet = (item.sourceBytes[1] ?? 0) & 0x1f;
+        // Parser formula:
+        //   horizontal: pos = deltaX + 8*reserved + offset
+        //   vertical  : pos = 15*(deltaX/16) + 8*reserved + offset
+        // with reserved ∈ {0, 1} (byte0 low nibble) and offset ∈ [0, 7].
+        let cursorBase = isH ? deltaX : 0x0f * Math.floor(deltaX / 0x10);
+        let diff = target - cursorBase;
+        if (diff < 0) {
+          bytes.push(0xf4); // backToStart
+          deltaX = 0;
+          deltaY = 0;
+          cursorBase = 0;
+          diff = target;
+        }
+        // Advance cursor in 16-tile (H) / 15-tile (V) chunks via F2
+        // skipper until the remaining diff fits in the groundSet byte
+        // pair (0..15).
+        while (diff > 15) {
+          bytes.push(0xf2);
+          deltaX += 16;
+          deltaY = 0;
+          diff -= isH ? 16 : 15;
+        }
+        const reserved = diff >= 8 ? 1 : 0; // byte0 low nibble
+        const offset = diff - reserved * 8; // byte1 top 3 bits, 0..7
+        const byte0 = 0xf0 | (reserved & 0x01);
+        const byte1 = ((offset & 0x07) << 5) | (gSet & 0x1f);
+        bytes.push(byte0);
+        bytes.push(byte1);
+        continue;
+      }
 
       case 'regular':
       case 'entrance': {

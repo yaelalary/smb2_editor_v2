@@ -212,6 +212,7 @@ function sizeOfItem(rom: Uint8Array, romOffset: number): ItemSizing {
 function populateAbsolutePositions(items: LevelItem[], isHorizontal: boolean): void {
   let deltaX = 0;
   let deltaY = 0;
+  let lastGroundPos = 0;
 
   for (const item of items) {
     switch (item.kind) {
@@ -244,6 +245,25 @@ function populateAbsolutePositions(items: LevelItem[], isHorizontal: boolean): v
           item.tileX = ix;
           item.tileY = deltaY + 0x0f * Math.floor(deltaX / 0x10);
         }
+        break;
+      }
+      case 'groundSet': {
+        // Cache absolute position so editor-side moves of regulars
+        // don't shift ground visually. Mirrors the math previously
+        // inline in computeGroundSegments + the monotonic clamp from
+        // the C++ parser (cneseditor_loader.cpp:75).
+        const byte0 = item.sourceBytes[0] ?? 0;
+        const byte1 = item.sourceBytes[1] ?? 0;
+        const reserved = byte0 & 0x0f;
+        let pos: number;
+        if (isHorizontal) {
+          pos = deltaX + 8 * reserved + Math.floor(byte1 / 0x20);
+        } else {
+          pos = 0x0f * Math.floor(deltaX / 0x10) + 8 * reserved + Math.floor(byte1 / 0x20);
+        }
+        if (pos <= lastGroundPos) pos = lastGroundPos + 1;
+        lastGroundPos = pos;
+        item.absoluteStartPos = pos;
         break;
       }
       default:

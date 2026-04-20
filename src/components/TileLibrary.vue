@@ -25,6 +25,7 @@ import { renderItem } from '@/rom/item-renderer';
 import { drawCanvas } from '@/rom/canvas-draw';
 import { libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
+import { drawHerbOverlay, enemyAtlasForLevel, hasHerbOverlay, preloadHerbOverlays } from '@/ui/herb-overlays';
 import type { LevelItem } from '@/rom/model';
 import {
   preloadAllAtlases,
@@ -37,7 +38,7 @@ const atlasReady = ref(false);
 const drawGeneration = ref(0);
 
 onMounted(async () => {
-  await preloadAllAtlases();
+  await Promise.all([preloadAllAtlases(), preloadHerbOverlays()]);
   atlasReady.value = true;
 });
 
@@ -140,8 +141,15 @@ function drawTile(el: unknown, libraryId: number): void {
   }
   if (maxX < 0) return;
 
-  const w = (maxX - minX + 1) * METATILE_SIZE;
-  const h = (maxY - minY + 1) * METATILE_SIZE;
+  const tileW = (maxX - minX + 1) * METATILE_SIZE;
+  const tileH = (maxY - minY + 1) * METATILE_SIZE;
+  // Herb overlays float above the tile (y negative). Reserve headroom
+  // so the sprite doesn't get clipped by the canvas top.
+  const overlayHeadroom = hasHerbOverlay(libraryId)
+    ? Math.ceil(METATILE_SIZE * 0.55)
+    : 0;
+  const w = tileW;
+  const h = tileH + overlayHeadroom;
   canvas.width = w;
   canvas.height = h;
   const scale = PREVIEW_MAX_PX / Math.max(w, h);
@@ -153,9 +161,19 @@ function drawTile(el: unknown, libraryId: number): void {
   if (!ctx) return;
   ctx.clearRect(0, 0, w, h);
   ctx.save();
-  ctx.translate(-minX * METATILE_SIZE, -minY * METATILE_SIZE);
+  // Draw tiles shifted down by the headroom so the overlay can occupy
+  // the top band without negative-y clipping.
+  ctx.translate(-minX * METATILE_SIZE, -minY * METATILE_SIZE + overlayHeadroom);
   drawCanvas(ctx, grid, palette);
   ctx.restore();
+
+  // Herb variants (items 32-42 / 43 / 45) paint a small content sprite
+  // above the tile so the library is readable at a glance.
+  if (hasHerbOverlay(libraryId)) {
+    const enemyAtlas = enemyAtlasForLevel((b as { header: { enemyColor: number } }).header.enemyColor);
+    drawHerbOverlay(ctx, 0, overlayHeadroom, METATILE_SIZE, libraryId, enemyAtlas);
+  }
+
   canvas.dataset['drawn'] = key;
 }
 </script>

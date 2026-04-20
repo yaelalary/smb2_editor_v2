@@ -22,6 +22,7 @@ import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsComman
 import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { MoveGroundSegmentCommand } from '@/commands/ground-commands';
+import { drawHerbOverlay, enemyAtlasForLevel, hasHerbOverlay, preloadHerbOverlays } from '@/ui/herb-overlays';
 import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
 import { activeDrag } from '@/ui/drag-state';
 import { renderItem } from '@/rom/item-renderer';
@@ -793,6 +794,19 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     }
     drawCanvas(ctx, grid, palette);
 
+    // ── Herb content badges ──────────────────────────────────────
+    // Editor-only: each "Herb with X" item (ids 32..42, 43, 45) gets a
+    // small enemy-atlas sprite painted above its tile showing what pops
+    // out on pull. Nothing changes in the ROM; purely a visual aid.
+    const herbEnemyAtlas = enemyAtlasForLevel(b.header.enemyColor);
+    for (const item of b.items) {
+      if (item.kind !== 'regular') continue;
+      if (item.tileX < 0 || item.tileY < 0) continue;
+      if (excluded.has(item)) continue;
+      if (!hasHerbOverlay(item.itemId)) continue;
+      drawHerbOverlay(ctx, item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, item.itemId, herbEnemyAtlas);
+    }
+
     // ── Ground mode overlay ──────────────────────────────────────
     // When the Ground tool is active, draw a faint boundary line at
     // each stream segment's startPos and highlight the selected one.
@@ -1202,7 +1216,7 @@ watch(() => history.revision, redraw);
 // overlays visible until some other event triggers a redraw.
 watch(() => editor.activeTool, redraw);
 onMounted(async () => {
-  await preloadAllAtlases();
+  await Promise.all([preloadAllAtlases(), preloadHerbOverlays()]);
   redraw();
 });
 

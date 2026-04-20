@@ -21,6 +21,7 @@ import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
+import { MoveGroundSegmentCommand } from '@/commands/ground-commands';
 import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
 import { activeDrag } from '@/ui/drag-state';
 import { renderItem } from '@/rom/item-renderer';
@@ -86,6 +87,16 @@ const hoverCursor = ref<'default' | 'ew-resize' | 'ns-resize'>('default');
 // Rubber-band selection rectangle (tile coordinates).
 const rubberBand = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
 
+// Hit-rects (CSS px) for the "Zone N" chips, rebuilt each draw. Drives
+// mousedown detection for drag-to-resize on a zone boundary.
+type ChipRect = { item: LevelItem; x: number; y: number; w: number; h: number };
+let chipRects: ChipRect[] = [];
+
+// Zone-chip drag state. `previewPos` is the clamped tile position the
+// boundary will snap to on mouseup. A ghost line is rendered at this
+// position during drag — no live ground reflow.
+const groundResizeDrag = ref<{ item: LevelItem; previewPos: number } | null>(null);
+
 const block = computed<LevelBlock | null>(() => {
   void history.revision;
   const b = rom.activeBlock;
@@ -101,6 +112,43 @@ function tileFromEvent(e: MouseEvent): { x: number; y: number } | null {
   const x = Math.floor((e.clientX - rect.left) / TILE_PX);
   const y = Math.floor((e.clientY - rect.top) / TILE_PX);
   return { x, y };
+}
+
+/** Raw CSS-pixel cursor position inside the canvas (null if offscreen). */
+function cssFromEvent(e: MouseEvent): { x: number; y: number } | null {
+  const canvas = canvasRef.value;
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+/** Zone-chip hit test against `chipRects` rebuilt each draw. */
+function hitTestChip(cssX: number, cssY: number): ChipRect | null {
+  for (const cr of chipRects) {
+    if (cssX >= cr.x && cssX < cr.x + cr.w && cssY >= cr.y && cssY < cr.y + cr.h) return cr;
+  }
+  return null;
+}
+
+/**
+ * Clamp a wanted start-pos for a ground segment to `[prev+1, next-1]` so
+ * both neighbour zones stay at least 1 tile wide. Matches `clampStart`
+ * in GroundPanel.vue.
+ */
+function clampGroundStart(item: LevelItem, wanted: number): number {
+  const b = block.value;
+  if (!b) return Math.floor(wanted);
+  const stream = b.items.filter((it) => it.kind === 'groundSet');
+  const idx = stream.indexOf(item);
+  if (idx < 0) return Math.floor(wanted);
+  const isH = b.header.direction === 1;
+  const { widthTiles, heightTiles } = levelDimensions(b);
+  const axisLen = isH ? widthTiles : heightTiles;
+  const prev = idx > 0 ? stream[idx - 1]! : null;
+  const next = idx < stream.length - 1 ? stream[idx + 1]! : null;
+  const min = (prev?.absoluteStartPos ?? 0) + 1;
+  const max = next ? (next.absoluteStartPos ?? axisLen) - 1 : axisLen - 1;
+  return Math.min(Math.max(Math.round(wanted), min), max);
 }
 
 function hitTestTile(tileX: number, tileY: number): LevelItem | null {
@@ -256,6 +304,22 @@ function onMouseDown(e: MouseEvent): void {
   isDraggingSelection = false;
   rubberBand.value = null;
 
+  // Ground mode: grabbing a "Zone N" chip starts a drag-to-resize. The
+  // ghost line renders at `previewPos` during drag — real commit on release.
+  if (editor.activeTool === 'ground') {
+    const css = cssFromEvent(e);
+    const chip = css ? hitTestChip(css.x, css.y) : null;
+    if (chip) {
+      editor.selectedGroundSegment = chip.item;
+      groundResizeDrag.value = {
+        item: chip.item,
+        previewPos: chip.item.absoluteStartPos ?? 0,
+      };
+      redraw();
+      return;
+    }
+  }
+
   // Resize-handle grab takes precedence over body click (a handle can
   // overlap neighbouring tiles and we want the drag to be resize, not
   // a move from the handle's cell).
@@ -280,11 +344,34 @@ function onMouseMove(e: MouseEvent): void {
     if (hoverCursor.value !== next) hoverCursor.value = next;
   }
 
+  // Hover affordance for ground chips (no button pressed).
+  if (e.buttons === 0 && editor.activeTool === 'ground') {
+    const css = cssFromEvent(e);
+    const chip = css ? hitTestChip(css.x, css.y) : null;
+    const isH = block.value?.header.direction === 1;
+    const next: typeof hoverCursor.value = chip ? (isH ? 'ew-resize' : 'ns-resize') : 'default';
+    if (hoverCursor.value !== next) hoverCursor.value = next;
+  }
+
   if (!mouseDownPos || e.buttons !== 1) return;
   if (!pos) return;
 
-  // Ground mode: no drag/rubber-band — the panel owns editing. Early return.
-  if (editor.activeTool === 'ground') return;
+  // Ground mode: either a chip drag (resize a zone) or no-op. The ghost
+  // line + fill band follow `previewPos` — no live ground reflow.
+  if (editor.activeTool === 'ground') {
+    const drag = groundResizeDrag.value;
+    if (!drag) return;
+    const css = cssFromEvent(e);
+    if (!css) return;
+    const isH = block.value?.header.direction === 1;
+    const cursorCss = isH ? css.x : css.y;
+    const clamped = clampGroundStart(drag.item, cursorCss / TILE_PX);
+    if (clamped !== drag.previewPos) {
+      groundResizeDrag.value = { item: drag.item, previewPos: clamped };
+      redraw();
+    }
+    return;
+  }
 
   // Enemy mode: group-drag if mouseDown was inside any selected enemy's
   // footprint; otherwise fall through to rubber-band.
@@ -347,10 +434,17 @@ function onMouseUp(e: MouseEvent): void {
 
   const moved = upPos.x !== mouseDownPos.x || upPos.y !== mouseDownPos.y;
 
-  // ─── Ground mode: click picks the segment under the cursor ─────
+  // ─── Ground mode: chip-drag release OR click-to-select body ────
   if (editor.activeTool === 'ground') {
     const b = block.value;
-    if (b) {
+    const drag = groundResizeDrag.value;
+    if (b && drag) {
+      const oldPos = drag.item.absoluteStartPos ?? 0;
+      if (drag.previewPos !== oldPos) {
+        history.execute(new MoveGroundSegmentCommand(b, drag.item, drag.previewPos, rom.activeSlot));
+      }
+      groundResizeDrag.value = null;
+    } else if (b) {
       const isH = b.header.direction === 1;
       const clickPos = isH ? upPos.x : upPos.y;
       const groundStream = b.items.filter((it) => it.kind === 'groundSet');
@@ -702,7 +796,10 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     // ── Ground mode overlay ──────────────────────────────────────
     // When the Ground tool is active, draw a faint boundary line at
     // each stream segment's startPos and highlight the selected one.
-    // Labels mark segment #. No canvas interaction beyond click-to-select.
+    // Labels mark segment #. Click-to-select on zone body; drag a
+    // "Zone N" chip to move its boundary (ghost line shows the target;
+    // commit happens on mouseup — no live ground reflow).
+    chipRects = [];
     if (editor.activeTool === 'ground') {
       const groundStream = b.items.filter((it) => it.kind === 'groundSet');
       const selectedGround = editor.selectedGroundSegment;
@@ -725,10 +822,14 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
           if (isH) ctx.fillRect(pos * TILE_PX, 0, (next - pos) * TILE_PX, cssH);
           else ctx.fillRect(0, pos * TILE_PX, cssW, (next - pos) * TILE_PX);
         }
-        // Boundary line.
-        ctx.strokeStyle = isSel ? '#66e0ff' : 'rgba(102, 224, 255, 0.55)';
-        ctx.lineWidth = isSel ? 2 : 1;
-        if (!isSel) ctx.setLineDash([4, 3]);
+        // Boundary at `pos` is the LEFT edge of `gi` AND the RIGHT edge
+        // of the previous zone (or of the header when i === 0). Solid
+        // when it borders the selected zone on either side.
+        const prevZone = i > 0 ? groundStream[i - 1]! : 'header';
+        const isSolid = isSel || selectedGround === prevZone;
+        ctx.strokeStyle = isSolid ? '#66e0ff' : 'rgba(102, 224, 255, 0.55)';
+        ctx.lineWidth = isSolid ? 2 : 1;
+        if (!isSolid) ctx.setLineDash([4, 3]);
         ctx.beginPath();
         if (isH) {
           ctx.moveTo(pos * TILE_PX + 0.5, 0);
@@ -756,6 +857,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
         ctx.fillStyle = '#000';
         ctx.textBaseline = 'top';
         ctx.fillText(labelText, lx + padX, ly + padY);
+        chipRects.push({ item: gi, x: lx, y: ly, w: lw, h: lh });
       }
       // Label the header zone at the very start — it's Zone 1 in the panel.
       const headerLabel = 'Zone 1';
@@ -767,6 +869,28 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       ctx.fillStyle = '#000';
       ctx.textBaseline = 'top';
       ctx.fillText(headerLabel, 8, 6);
+
+      // Ghost line — shown during a chip drag at the target (snapped,
+      // clamped) tile position. Not a commit; just shows where the
+      // boundary will land when the user releases the button.
+      const drag = groundResizeDrag.value;
+      if (drag && (drag.item.absoluteStartPos ?? 0) !== drag.previewPos) {
+        const gx = drag.previewPos * TILE_PX + 0.5;
+        ctx.save();
+        ctx.strokeStyle = '#ffcc00';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        if (isH) {
+          ctx.moveTo(gx, 0);
+          ctx.lineTo(gx, cssH);
+        } else {
+          ctx.moveTo(0, gx);
+          ctx.lineTo(cssW, gx);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // Selection rings — drawn as a single-tile box at the item anchor.
@@ -1072,6 +1196,11 @@ watch(() => rom.activeSlot, () => {
   redraw();
 });
 watch(() => history.revision, redraw);
+// Overlays (ground zone labels, selection rings, resize handles) are
+// gated on `editor.activeTool` inside `draw()`. Without this watch, the
+// canvas keeps its previous frame when you switch tabs, leaving stale
+// overlays visible until some other event triggers a redraw.
+watch(() => editor.activeTool, redraw);
 onMounted(async () => {
   await preloadAllAtlases();
   redraw();

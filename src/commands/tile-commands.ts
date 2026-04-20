@@ -11,6 +11,7 @@
 
 import type { Command, Mutable } from './types';
 import type { LevelBlock, LevelItem } from '@/rom/model';
+import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
 
 /**
  * Create the sourceBytes for a new regular item at an absolute position.
@@ -58,14 +59,19 @@ export class PlaceTileCommand implements Command {
   ) {
     this.block = block as Mutable<LevelBlock>;
     const itemId = libraryIdToRomByte(libraryId);
+    // Library IDs 9/10/11/19/20/21/28/29/30 are door/entrance items — the
+    // parser flags these as kind='entrance' so `renderItem` dispatches to
+    // `renderEntrance`. We must mirror that here or the drop falls through
+    // the regular switch, matches nothing, and renders blank.
+    const kind: LevelItem['kind'] = ENTRANCE_ITEM_IDS.has(libraryId) ? 'entrance' : 'regular';
     this.newItem = {
-      kind: 'regular',
+      kind,
       sourceBytes: makeRegularItemBytes(itemId),
       sourceRange: [0, 0], // not meaningful for new items
       tileX,
       tileY,
       itemId,
-    };
+    } as LevelItem;
     this.targetSlot = targetSlot;
     this.label = `Place item 0x${itemId.toString(16).toUpperCase()} at (${tileX}, ${tileY})`;
   }

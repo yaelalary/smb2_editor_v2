@@ -18,12 +18,17 @@ import { ITEM_NAMES, ITEM_DIM, getItemDimTiles } from '@/rom/nesleveldef';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { getFxForSlot } from '@/rom/level-layout';
+import { getWorldGfx } from '@/rom/tile-reader';
 import { readLevelPalette } from '@/rom/palette-reader';
+import { CanvasGrid } from '@/rom/canvas-grid';
+import { renderItem } from '@/rom/item-renderer';
+import { drawCanvas } from '@/rom/canvas-draw';
+import { libraryIdToRomByte } from '@/commands/tile-commands';
+import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
+import type { LevelItem } from '@/rom/model';
 import {
-  metatileRect,
   preloadAllAtlases,
   METATILE_SIZE,
-  getColorizedAtlas,
 } from '@/assets/metatiles';
 
 const rom = useRomStore();
@@ -50,11 +55,7 @@ function getCurrentPalette() {
   return readLevelPalette(romData.rom, rom.activeSlot, (b as { header: { palette: number } }).header.palette);
 }
 
-function getItemAtlasIndex(): number {
-  return getFxForSlot(rom.activeSlot) + 4;
-}
-
-function primaryTileId(itemId: number): number | null {
+function hasPreviewTile(itemId: number): boolean {
   let tiles: readonly number[];
   if (itemId < 48) {
     tiles = ITEM_DIM[itemId] ?? [];
@@ -62,7 +63,7 @@ function primaryTileId(itemId: number): number | null {
     tiles = getItemDimTiles(itemId, 0, 0);
   }
   const t = tiles[0];
-  return t !== undefined && t !== 0xff ? t : null;
+  return t !== undefined && t !== 0xff;
 }
 
 function onDragStart(e: DragEvent, itemId: number): void {
@@ -83,32 +84,78 @@ function itemName(id: number): string {
   return ITEM_NAMES[id] ?? `Item #${id}`;
 }
 
-function drawTile(el: unknown, itemId: number): void {
+// Library previews route through the same `renderItem` + `drawCanvas`
+// pipeline used by the editor canvas, so the sprite shown in the library
+// is exactly what `PlaceTileCommand` produces. Avoids the class of bugs
+// where library uses one atlas path (e.g., item atlas) while the editor
+// uses another (e.g., BG atlas for ground items).
+const PREVIEW_MAX_PX = 32;
+const PREVIEW_GRID = 4;
+
+function drawTile(el: unknown, libraryId: number): void {
   if (!el) return;
   const canvas = el as HTMLCanvasElement;
   const palette = getCurrentPalette();
-  const atlasIdx = getItemAtlasIndex();
-  const src = palette ? getColorizedAtlas(atlasIdx, palette) : null;
+  const romData = rom.romData;
+  const b = rom.activeBlock;
+  if (!palette || !romData || !b) return;
+  const header = (b as { header: { direction: number; palette: number; objectType: number } }).header;
 
-  // Stamp generation so Vue re-runs this when drawGeneration changes
   void drawGeneration.value;
 
-  const key = `${itemId}:${atlasIdx}:${palette?.nesIndices.join(',') ?? ''}`;
+  const slot = rom.activeSlot;
+  const fx = getFxForSlot(slot);
+  const world = Math.floor(slot / 30);
+  const gfx = getWorldGfx(romData.rom, world);
+  const isH = header.direction === 1;
+
+  const key = `${libraryId}:${fx}:${gfx}:${header.objectType}:${palette.nesIndices.join(',')}`;
   if (canvas.dataset['drawn'] === key) return;
 
-  canvas.width = METATILE_SIZE;
-  canvas.height = METATILE_SIZE;
-  canvas.style.width = '24px';
-  canvas.style.height = '24px';
-  canvas.style.imageRendering = 'pixelated';
-  const ctx = canvas.getContext('2d');
-  if (!ctx || !src) return;
+  const itemId = libraryIdToRomByte(libraryId);
+  const previewItem: LevelItem = {
+    kind: ENTRANCE_ITEM_IDS.has(libraryId) ? 'entrance' : 'regular',
+    itemId,
+    tileX: 0,
+    tileY: 0,
+    sourceBytes: new Uint8Array([0, itemId & 0xff]),
+    sourceRange: [0, 0],
+  } as LevelItem;
 
-  ctx.clearRect(0, 0, METATILE_SIZE, METATILE_SIZE);
-  const tid = primaryTileId(itemId);
-  if (tid === null) return;
-  const { sx, sy } = metatileRect(tid);
-  ctx.drawImage(src, sx, sy, METATILE_SIZE, METATILE_SIZE, 0, 0, METATILE_SIZE, METATILE_SIZE);
+  const grid = new CanvasGrid(PREVIEW_GRID, PREVIEW_GRID, fx, gfx, isH);
+  renderItem(grid, previewItem, romData.rom, slot, header as never);
+
+  // Crop to the bbox of visible cells so 1×1 items show compact, while
+  // multi-tile items (doors, big clouds, hawkmouth) show their real shape.
+  let minX = PREVIEW_GRID, minY = PREVIEW_GRID, maxX = -1, maxY = -1;
+  for (let y = 0; y < PREVIEW_GRID; y++) {
+    for (let x = 0; x < PREVIEW_GRID; x++) {
+      if (grid.getItem(x, y).visible) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return;
+
+  const w = (maxX - minX + 1) * METATILE_SIZE;
+  const h = (maxY - minY + 1) * METATILE_SIZE;
+  canvas.width = w;
+  canvas.height = h;
+  const scale = PREVIEW_MAX_PX / Math.max(w, h);
+  canvas.style.width = `${w * scale}px`;
+  canvas.style.height = `${h * scale}px`;
+  canvas.style.imageRendering = 'pixelated';
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(-minX * METATILE_SIZE, -minY * METATILE_SIZE);
+  drawCanvas(ctx, grid, palette);
+  ctx.restore();
   canvas.dataset['drawn'] = key;
 }
 </script>
@@ -144,7 +191,7 @@ function drawTile(el: unknown, itemId: number): void {
             @dragend="onDragEnd"
           >
             <canvas
-              v-if="atlasReady && primaryTileId(itemId) !== null"
+              v-if="atlasReady && hasPreviewTile(itemId)"
               :key="`${itemId}-${drawGeneration}`"
               :ref="(el) => drawTile(el, itemId)"
               class="shrink-0 bg-black/20 rounded-sm"

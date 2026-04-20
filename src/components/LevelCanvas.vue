@@ -19,6 +19,7 @@ import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
+import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { isResizable, handlePosition, sizeFromHover, withSize, resizeAxis } from '@/rom/item-resize';
 import { activeDrag } from '@/ui/drag-state';
@@ -819,7 +820,7 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       if (libItemActive) {
         const romByte = libraryIdToRomByte(libDrag.id);
         const previewItem: LevelItem = {
-          kind: 'regular',
+          kind: ENTRANCE_ITEM_IDS.has(libDrag.id) ? 'entrance' : 'regular',
           itemId: romByte,
           tileX: libDragTile.x,
           tileY: libDragTile.y,

@@ -236,7 +236,14 @@ function onDragOver(e: DragEvent): void {
   if (!accept) return;
   e.preventDefault();
   e.dataTransfer!.dropEffect = 'copy';
+  // HTML5 `dragover` fires at ~100Hz — redrawing on every event builds
+  // a redraw queue that never catches up (each redraw clones the whole
+  // canvas grid + rerenders all items). Guard on tile-change only, the
+  // same way `mousemove` does for existing-item drags.
   const tile = tileFromEvent(e);
+  const prev = ghostTile.value;
+  if (prev === null && tile === null) return;
+  if (prev !== null && tile !== null && prev.x === tile.x && prev.y === tile.y) return;
   ghostTile.value = tile;
   redraw();
 }

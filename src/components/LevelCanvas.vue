@@ -37,6 +37,12 @@ import {
 } from '@/assets/metatiles';
 
 const TILE_PX = 16;
+// CSS display scale — the canvas renders at `TILE_PX` logical units per
+// tile (unchanged) but displays `TILE_PX * ZOOM` CSS px per tile. Every
+// drawing op still uses logical coordinates; only the final composition
+// is magnified via `ctx.setTransform`. Mouse coordinates divide by ZOOM
+// so click targets stay tile-aligned.
+const ZOOM = 2;
 
 const rom = useRomStore();
 const history = useHistoryStore();
@@ -110,17 +116,21 @@ function tileFromEvent(e: MouseEvent): { x: number; y: number } | null {
   const canvas = canvasRef.value;
   if (!canvas) return null;
   const rect = canvas.getBoundingClientRect();
-  const x = Math.floor((e.clientX - rect.left) / TILE_PX);
-  const y = Math.floor((e.clientY - rect.top) / TILE_PX);
+  const x = Math.floor((e.clientX - rect.left) / (TILE_PX * ZOOM));
+  const y = Math.floor((e.clientY - rect.top) / (TILE_PX * ZOOM));
   return { x, y };
 }
 
-/** Raw CSS-pixel cursor position inside the canvas (null if offscreen). */
+/**
+ * Cursor position in logical canvas units (i.e. un-zoomed CSS space).
+ * `chipRects` are stored in logical units too, so hit-testing stays
+ * consistent across zoom levels.
+ */
 function cssFromEvent(e: MouseEvent): { x: number; y: number } | null {
   const canvas = canvasRef.value;
   if (!canvas) return null;
   const rect = canvas.getBoundingClientRect();
-  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  return { x: (e.clientX - rect.left) / ZOOM, y: (e.clientY - rect.top) / ZOOM };
 }
 
 /** Zone-chip hit test against `chipRects` rebuilt each draw. */
@@ -714,12 +724,17 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
   const { widthTiles, heightTiles } = levelDimensions(b);
   const cssW = widthTiles * TILE_PX;
   const cssH = heightTiles * TILE_PX;
+  // Bitmap is sized at `ZOOM × dpr` the logical resolution so pixel
+  // art stays crisp at the magnified display size.
+  const pixelScale = dpr * ZOOM;
 
-  canvas.width = cssW * dpr;
-  canvas.height = cssH * dpr;
-  canvas.style.width = `${cssW}px`;
-  canvas.style.height = `${cssH}px`;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  canvas.width = cssW * pixelScale;
+  canvas.height = cssH * pixelScale;
+  canvas.style.width = `${cssW * ZOOM}px`;
+  canvas.style.height = `${cssH * ZOOM}px`;
+  canvas.style.imageRendering = 'pixelated';
+  ctx.setTransform(pixelScale, 0, 0, pixelScale, 0, 0);
+  ctx.imageSmoothingEnabled = false;
 
   const romData = rom.romData;
   const palette = romData

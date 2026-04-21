@@ -325,7 +325,7 @@ function onDownload(): void {
       >
         <LevelList class="min-h-0 overflow-hidden border-b border-panel-border" />
 
-        <!-- Tool tabs: Tiles / Enemies / Areas -->
+        <!-- Tool tabs: Tiles / Enemies / Ground / Advanced -->
         <div class="flex border-b border-panel-border bg-panel-subtle">
           <button
             :class="[
@@ -363,13 +363,13 @@ function onDownload(): void {
           <button
             :class="[
               'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
-              editor.activeTool === 'links'
+              editor.activeTool === 'advanced'
                 ? 'bg-panel text-ink border-b-2 border-accent'
                 : 'text-ink-muted hover:text-ink',
             ]"
-            @click="editor.activeTool = 'links'"
+            @click="editor.activeTool = 'advanced'"
           >
-            Areas
+            Advanced
           </button>
         </div>
 

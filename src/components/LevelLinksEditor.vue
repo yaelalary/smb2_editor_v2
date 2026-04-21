@@ -1,16 +1,15 @@
 <script setup lang="ts">
 /**
- * Area connections editor — Unit 18.
+ * Data sharing editor (advanced).
  *
- * In SMB2, each "level" (like World 1-1) is made of several AREAS
- * connected by doors and jars. The game has 210 area slots. Each
- * slot loads a piece of level data and a piece of enemy data.
- * Multiple areas can share the same data (e.g. the subspace areas
- * reuse the same layout).
+ * SMB2 has 210 "room" slots (7 worlds × 3 levels × 10 sub-levels).
+ * Each slot points at a layout data block and an enemy data block in
+ * ROM. Multiple rooms can share the same block to save ROM space
+ * (e.g. sub-space rooms reuse the same layout).
  *
- * This editor lets the user see and change which data each area loads.
- * It shows all 210 areas grouped by world, with dropdowns to reassign
- * what level/enemy data each area uses.
+ * This panel lets power users reassign those block pointers. It does
+ * NOT control where doors lead — that's handled per-item in the
+ * Item Inspector (see `ItemInspector.vue`).
  */
 import { computed } from 'vue';
 import BasePanel from './common/BasePanel.vue';
@@ -44,7 +43,7 @@ function buildBlockLabels(
     if (s === null) return '(unused data)';
     const c = counts[i] ?? 0;
     const name = slotLabel(s);
-    return c > 1 ? `${name} data (shared by ${c} areas)` : `${name} data`;
+    return c > 1 ? `${name} data (shared by ${c} rooms)` : `${name} data`;
   });
 }
 
@@ -69,13 +68,13 @@ const worldGroups = computed(() => {
   const em = rom.enemyMap;
   if (!lm || !em) return [];
 
-  const groups: { worldLabel: string; areas: { slot: number; label: string; levelBlock: number; enemyBlock: number }[] }[] = [];
+  const groups: { worldLabel: string; rooms: { slot: number; label: string; title: string; levelBlock: number; enemyBlock: number }[] }[] = [];
 
   for (let wg = 0; wg < 7; wg++) {
-    const areas: typeof groups[number]['areas'] = [];
+    const rooms: typeof groups[number]['rooms'] = [];
     for (let i = 0; i < 30; i++) {
       const slot = wg * 30 + i;
-      areas.push({
+      rooms.push({
         slot,
         label: slotLabel(slot),
         title: slotLabelVerbose(slot),
@@ -83,7 +82,7 @@ const worldGroups = computed(() => {
         enemyBlock: em.slotToBlock[slot] ?? 0,
       });
     }
-    groups.push({ worldLabel: `Monde ${wg + 1}`, areas });
+    groups.push({ worldLabel: `World ${wg + 1}`, rooms });
   }
   return groups;
 });
@@ -120,10 +119,15 @@ function setEnemyBlock(slot: number, newBlock: number): void {
 </script>
 
 <template>
-  <BasePanel title="Area connections">
+  <BasePanel title="Data sharing (advanced)">
     <p class="px-3 py-2 text-[10px] text-ink-muted leading-snug border-b border-panel-border">
-      Each level is made of areas connected by doors and jars.
-      Change which layout and enemies an area loads.
+      Each of the 210 rooms points at a layout block and an enemy block in the ROM.
+      Multiple rooms can share the same block to save space. Most rooms use their
+      default block — only change this if you know what you're doing.
+    </p>
+    <p class="px-3 pb-2 text-[10px] text-ink-muted leading-snug border-b border-panel-border">
+      To change where a <em>door</em> or <em>jar</em> leads, click it on the canvas
+      and use the Item Inspector on the right.
     </p>
 
     <div class="overflow-auto">
@@ -143,19 +147,19 @@ function setEnemyBlock(slot: number, newBlock: number): void {
           <thead>
             <tr class="border-b border-panel-border/50 text-ink-muted">
               <th class="px-2 py-1 text-left font-medium">
-                Area
+                Room
               </th>
               <th class="px-2 py-1 text-left font-medium">
-                Layout
+                Layout data
               </th>
               <th class="px-2 py-1 text-left font-medium">
-                Enemies
+                Enemy data
               </th>
             </tr>
           </thead>
           <tbody>
             <tr
-              v-for="a in group.areas"
+              v-for="a in group.rooms"
               :key="a.slot"
               :class="[
                 'border-b border-panel-border/30 hover:bg-panel-subtle transition-colors',
@@ -164,6 +168,7 @@ function setEnemyBlock(slot: number, newBlock: number): void {
             >
               <td
                 class="px-2 py-1 font-mono text-ink-muted whitespace-nowrap cursor-pointer hover:text-ink"
+                :title="a.title"
                 @click="rom.selectSlot(a.slot)"
               >
                 {{ a.label }}

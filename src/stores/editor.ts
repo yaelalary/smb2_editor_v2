@@ -9,7 +9,7 @@ import { ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { LevelItem } from '@/rom/model';
 
-export type EditorTool = 'tiles' | 'enemies' | 'ground' | 'links';
+export type EditorTool = 'tiles' | 'enemies' | 'ground' | 'advanced';
 
 /**
  * Ground segment selection — either the header (sentinel) or a
@@ -32,5 +32,17 @@ export const useEditorStore = defineStore('editor', () => {
    */
   const selectedGroundSegment = shallowRef<GroundSelection>('header');
 
-  return { activeTool, showEnemies, selectedGroundSegment };
+  /**
+   * Currently-selected item(s) on the canvas. Shared with the right-
+   * side Item Inspector so it can render the destination picker and
+   * other per-item properties. `shallowRef` preserves reference
+   * identity — downstream code (selection rings, move commands) relies
+   * on `===` comparisons against LevelItem instances.
+   *
+   * The canvas watches this ref to refresh the selection ring AND to
+   * scroll the first selected item into view (no-op if already visible).
+   */
+  const selectedItems = shallowRef<LevelItem[]>([]);
+
+  return { activeTool, showEnemies, selectedGroundSegment, selectedItems };
 });

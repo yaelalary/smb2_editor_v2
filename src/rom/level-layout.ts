@@ -47,7 +47,7 @@ export function slotSubSection(slot: number): number {
 }
 
 /**
- * Compact SMB-style label: "1-1·1" (monde-niveau·sous-section, 1-indexed).
+ * Compact SMB-style label: "1-1·1" (world-level·sub-level, 1-indexed).
  * Fits in narrow UI columns while remaining unambiguous.
  */
 export function slotLabel(slot: number): string {
@@ -57,12 +57,12 @@ export function slotLabel(slot: number): string {
   return `${w}-${l}·${s}`;
 }
 
-/** Verbose label for tooltips & details: "Monde 1, niveau 1, sous-section 1". */
+/** Verbose label for tooltips & details: "World 1, Level 1, Sub-level 1". */
 export function slotLabelVerbose(slot: number): string {
   const w = slotWorld(slot) + 1;
   const l = slotLevel(slot) + 1;
   const s = slotSubSection(slot) + 1;
-  return `Monde ${w}, niveau ${l}, sous-section ${s}`;
+  return `World ${w}, Level ${l}, Sub-level ${s}`;
 }
 
 /**

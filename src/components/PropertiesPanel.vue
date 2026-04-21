@@ -1,19 +1,25 @@
 <script setup lang="ts">
 /**
- * Right panel: edits the 8 level header fields for the active slot.
+ * Right panel — context-aware.
  *
- * Every change goes through `SetLevelFieldCommand` → `useHistoryStore().execute()`,
- * making all mutations undoable via Ctrl+Z.
+ * Shows one of three views depending on the canvas selection:
+ *   - Exactly 1 item selected → ItemInspector (per-item properties,
+ *     including routing destination for doors/jars).
+ *   - N > 1 items selected    → count summary (fallback).
+ *   - No item selected        → level header properties (direction,
+ *     length, music, palette, etc.). Unchanged from the original
+ *     single-mode panel.
  *
- * Reactivity: the history store's `revision` counter is used as a
- * dependency so this panel re-renders after every execute/undo/redo
- * without requiring deep reactivity on the LevelMap shallowRef.
+ * Every level-field change goes through `SetLevelFieldCommand` →
+ * `useHistoryStore().execute()`, making all mutations undoable via Ctrl+Z.
  */
 import { computed } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import PaletteEditor from './PaletteEditor.vue';
+import ItemInspector from './ItemInspector.vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
+import { useEditorStore } from '@/stores/editor';
 import {
   SetLevelFieldCommand,
   type EditableHeaderField,
@@ -22,6 +28,12 @@ import type { LevelBlock, LevelHeader } from '@/rom/model';
 
 const rom = useRomStore();
 const history = useHistoryStore();
+const editor = useEditorStore();
+
+const selectionCount = computed(() => {
+  void history.revision;
+  return editor.selectedItems.length;
+});
 
 const block = computed<LevelBlock | null>(() => {
   void history.revision; // reactive dependency for model mutations
@@ -77,6 +89,22 @@ const FIELDS: FieldDef[] = [
       Select a level to edit properties.
     </div>
 
+    <!-- Single item selected → Item Inspector takes over -->
+    <ItemInspector v-else-if="selectionCount === 1" />
+
+    <!-- Multi-selection → count summary, no per-item edits -->
+    <div
+      v-else-if="selectionCount > 1"
+      class="p-3 space-y-1 text-sm text-ink-muted"
+    >
+      <p>{{ selectionCount }} items selected.</p>
+      <p class="text-[10px]">
+        Select a single item to edit its properties,
+        or click elsewhere to view level properties.
+      </p>
+    </div>
+
+    <!-- No selection → level header fields (original behavior) -->
     <div
       v-else
       class="p-3 space-y-3"

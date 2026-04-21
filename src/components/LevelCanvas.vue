@@ -8,7 +8,8 @@
  *   - Delete/Backspace → DeleteItemCommand
  *   - Drag selected item → MoveItemCommand
  */
-import { ref, shallowRef, watch, onMounted, onUnmounted, computed } from 'vue';
+import { ref, shallowRef, watch, onMounted, onUnmounted, computed, nextTick } from 'vue';
+import { storeToRefs } from 'pinia';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
@@ -48,12 +49,13 @@ const rom = useRomStore();
 const history = useHistoryStore();
 const editor = useEditorStore();
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-// shallowRef — see comment on `selectedEnemies` below. Same reasoning:
-// ref() deep-proxies stored items, breaking reference identity against
-// the raw items iterated in draw and in command `indexOf()` lookups.
-// Without this, DeleteItemCommand.execute silently no-ops because
-// `this.block.items.indexOf(this.item)` returns -1.
-const selectedItems = shallowRef<LevelItem[]>([]);
+const scrollContainerRef = ref<HTMLDivElement | null>(null);
+// Item selection lives in the editor store so the right-side Item
+// Inspector (PropertiesPanel) can render destination pickers for the
+// currently-selected entrance/jar. The store uses `shallowRef` —
+// see the comment on `selectedEnemies` below for why that matters
+// (command indexOf/=== needs raw LevelItem identity).
+const { selectedItems } = storeToRefs(editor);
 /**
  * Enemy selection mirrors `selectedItems` — multi-select via shift/ctrl
  * or rubber-band. Each entry carries its `pageIndex` because enemy
@@ -162,11 +164,52 @@ function clampGroundStart(item: LevelItem, wanted: number): number {
   return Math.min(Math.max(Math.round(wanted), min), max);
 }
 
+/**
+ * Footprint (width × height in tiles) relative to the item's anchor —
+ * used to make multi-tile items selectable anywhere on their visible
+ * area, not only on their anchor pixel.
+ *
+ * For entrance items 20 (Light entrance left), the anchor is the
+ * top-RIGHT of a 3×2 box extending leftward; we record a negative
+ * `ax` offset so the footprint starts 2 tiles left of the anchor.
+ */
+const ITEM_FOOTPRINTS: Record<number, { ax: number; ay: number; w: number; h: number }> = {
+  // Doors / entrances — see clvldraw_worker.cpp::DrawSpecialObjectEx.
+  0x09: { ax: 0, ay: 0, w: 1, h: 2 }, // Locked door
+  0x0a: { ax: 0, ay: 0, w: 1, h: 2 }, // Door
+  0x0b: { ax: 0, ay: 0, w: 1, h: 2 }, // Dark entrance
+  0x13: { ax: 0, ay: 0, w: 3, h: 2 }, // Light entrance (right)
+  0x14: { ax: -2, ay: 0, w: 3, h: 2 }, // Light entrance (left) — anchor at top-right
+  0x15: { ax: 0, ay: 0, w: 1, h: 2 }, // White entrance
+  0x1c: { ax: 0, ay: 0, w: 1, h: 2 }, // Castle entrance 1
+  0x1d: { ax: 0, ay: 0, w: 1, h: 2 }, // Castle entrance 2
+  0x1e: { ax: 0, ay: 0, w: 1, h: 1 }, // Big-mouth desert entrance
+  // Jars — tall 1×2 by default (or 1×3+ if extends to ground, but
+  // the anchor block we need for a click is the top).
+  0x04: { ax: 0, ay: 0, w: 1, h: 1 }, // Jar (small)
+  0x06: { ax: 0, ay: 0, w: 1, h: 2 }, // Jar (enterable)
+  0x07: { ax: 0, ay: 0, w: 1, h: 2 }, // Jar (enterable variant)
+  0x08: { ax: 0, ay: 0, w: 1, h: 2 }, // Jar (warp zone)
+};
+
 function hitTestTile(tileX: number, tileY: number): LevelItem | null {
   const b = block.value;
   if (!b) return null;
+  // Prefer an exact anchor match for single-tile items — matches the
+  // previous behavior and keeps selection predictable when items
+  // overlap. Fall back to footprint check so multi-tile entrances
+  // (doors, light entrances) are selectable on their visible body.
   for (const item of b.items) {
     if (item.tileX === tileX && item.tileY === tileY) return item;
+  }
+  for (const item of b.items) {
+    const fp = ITEM_FOOTPRINTS[item.itemId];
+    if (!fp) continue;
+    const x0 = item.tileX + fp.ax;
+    const y0 = item.tileY + fp.ay;
+    if (tileX >= x0 && tileX < x0 + fp.w && tileY >= y0 && tileY < y0 + fp.h) {
+      return item;
+    }
   }
   return null;
 }
@@ -929,16 +972,20 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       }
     }
 
-    // Selection rings — drawn as a single-tile box at the item anchor.
-    // Multi-tile items show a small ring at the anchor; the full footprint
-    // is still visible via the atlas blit. Keep this simple: computing
-    // per-item footprint from the grid requires tracking regularId writes
-    // across cells, which doesn't round-trip reliably when items overlap.
+    // Selection rings — wrap the full footprint for multi-tile items
+    // (doors 1×2, light entrances 3×2, jars 1×2) so the user can see
+    // exactly which door/jar is selected when several sit side by side.
+    // Single-tile items fall back to the 1×1 anchor box.
     for (const item of selectedItems.value) {
       if (item.tileX < 0 || item.tileY < 0) continue;
+      const fp = ITEM_FOOTPRINTS[item.itemId];
+      const x0 = (item.tileX + (fp?.ax ?? 0)) * TILE_PX;
+      const y0 = (item.tileY + (fp?.ay ?? 0)) * TILE_PX;
+      const w = (fp?.w ?? 1) * TILE_PX;
+      const h = (fp?.h ?? 1) * TILE_PX;
       ctx.strokeStyle = '#ffcc00';
       ctx.lineWidth = 2;
-      ctx.strokeRect(item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, TILE_PX);
+      ctx.strokeRect(x0, y0, w, h);
     }
 
     // ── Ghost overlay (drag-move + resize + library drop) ──────
@@ -1232,6 +1279,66 @@ watch(() => rom.activeSlot, () => {
   redraw();
 });
 watch(() => history.revision, redraw);
+// Selection change from anywhere (mouse handlers already redraw
+// explicitly; external callers like the Item Inspector's "Go to
+// destination" flow depend on this reactive trigger).
+//
+// Sequence: redraw first (paints the selection ring), then wait for
+// the browser to complete layout, then scroll the first selected item
+// into view. `scrollItemIntoView` is a no-op if the item is already
+// fully visible — safe for mouse-click selections. The scroll only
+// kicks in when the selection was set programmatically on an off-
+// screen target (e.g., "Go to destination →").
+//
+// Two RAFs are required because `rom.selectSlot` can resize the canvas
+// via `canvas.style.width/height`, and the browser doesn't recompute
+// `scrollWidth`/`scrollHeight` until after the next paint. One RAF
+// fires *before* that paint (layout still stale); two RAFs land after
+// it, so `scrollTo` operates on the new dimensions.
+watch(() => editor.selectedItems, async (items) => {
+  redraw();
+  if (items.length === 0) return;
+  await nextTick();
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  scrollItemIntoView(items[0]!);
+});
+
+/**
+ * Scroll the canvas container so the given item is centered in view.
+ * No-op if the item is already fully visible or no container. Used by
+ * the Item Inspector's "Go to destination" flow before it sets the
+ * selection — so the arrival door is on-screen when its ring lights up.
+ */
+function scrollItemIntoView(item: LevelItem): void {
+  const container = scrollContainerRef.value;
+  if (!container) return;
+  if (item.tileX < 0 || item.tileY < 0) return;
+  const fp = ITEM_FOOTPRINTS[item.itemId];
+  const ax = item.tileX + (fp?.ax ?? 0);
+  const ay = item.tileY + (fp?.ay ?? 0);
+  const w = (fp?.w ?? 1);
+  const h = (fp?.h ?? 1);
+  const pxPerTile = TILE_PX * ZOOM;
+  const itemL = ax * pxPerTile;
+  const itemT = ay * pxPerTile;
+  const itemR = itemL + w * pxPerTile;
+  const itemB = itemT + h * pxPerTile;
+  const viewL = container.scrollLeft;
+  const viewT = container.scrollTop;
+  const viewR = viewL + container.clientWidth;
+  const viewB = viewT + container.clientHeight;
+  const visibleX = itemL >= viewL && itemR <= viewR;
+  const visibleY = itemT >= viewT && itemB <= viewB;
+  if (visibleX && visibleY) return;
+  const centerX = (itemL + itemR) / 2 - container.clientWidth / 2;
+  const centerY = (itemT + itemB) / 2 - container.clientHeight / 2;
+  container.scrollTo({
+    left: Math.max(0, centerX),
+    top: Math.max(0, centerY),
+    behavior: 'auto',
+  });
+}
 // Overlays (ground zone labels, selection rings, resize handles) are
 // gated on `editor.activeTool` inside `draw()`. Without this watch, the
 // canvas keeps its previous frame when you switch tabs, leaving stale
@@ -1252,6 +1359,7 @@ onUnmounted(() => dprMedia.removeEventListener('change', redraw));
 
 <template>
   <div
+    ref="scrollContainerRef"
     class="relative h-full overflow-auto bg-[#111] outline-none"
     tabindex="0"
     @keydown="onKeyDown"

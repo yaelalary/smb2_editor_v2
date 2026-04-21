@@ -136,3 +136,10 @@ export const LEVEL_HEADER_BYTES = 4;
 export const ENTRANCE_ITEM_IDS: ReadonlySet<number> = new Set([
   0x09, 0x0a, 0x0b, 0x13, 0x14, 0x15, 0x1c, 0x1d, 0x1e,
 ]);
+
+/**
+ * Jar ids that are enterable (they store a destination like entrances).
+ * Item 0x04 is the small jar that the player cannot enter — it has no
+ * routing. 0x06 / 0x07 are regular enterable jars; 0x08 is the warp jar.
+ */
+export const ENTERABLE_JAR_IDS: ReadonlySet<number> = new Set([0x06, 0x07, 0x08]);

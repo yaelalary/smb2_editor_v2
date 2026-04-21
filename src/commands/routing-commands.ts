@@ -25,7 +25,8 @@
  */
 
 import type { Command, Mutable } from './types';
-import type { LevelBlock, LevelItem } from '@/rom/model';
+import type { LevelBlock, LevelItem, LevelMap } from '@/rom/model';
+import { ENTERABLE_JAR_IDS } from '@/rom/constants';
 
 /** Destinations > this threshold use the 5-byte "far pointer" form. */
 const FAR_POINTER_THRESHOLD = 150;
@@ -89,6 +90,104 @@ function encodeDestinationBytes(slot: number, page: number): number[] {
   return [tens, onesAndPage];
 }
 
+/** True if this item can hold a destination (entrance or enterable jar). */
+export function isRoutingItem(item: LevelItem): boolean {
+  return item.kind === 'entrance' || ENTERABLE_JAR_IDS.has(item.itemId);
+}
+
+/**
+ * Page where this item sits given the room's direction.
+ * Horizontal rooms (direction=1) advance by 16 tiles per page on X.
+ * Vertical rooms (direction=0) advance by 15 tiles per page on Y.
+ */
+export function tilePageOf(item: LevelItem, block: LevelBlock): number {
+  const horizontal = block.header.direction === 1;
+  const coord = horizontal ? item.tileX : item.tileY;
+  const pageSize = horizontal ? 16 : 15;
+  const raw = Math.floor(coord / pageSize);
+  return Math.max(0, Math.min(9, raw));
+}
+
+/**
+ * Strict pair lookup: the specific door in `destRoomSlot` at `destPage`
+ * whose destination is (`sourceSlot`, `sourcePage`). Null if no such
+ * door exists — the source is then considered "orphan".
+ *
+ * Both sides must match (slot AND page). Slot-only matching would
+ * falsely classify a door as paired whenever its dest room happens to
+ * contain *some* door pointing back — e.g. an orphan left over after
+ * a re-pair, or a coincidental room co-location. The spawn-page fixes
+ * the partner uniquely.
+ */
+export function findBackPointer(
+  levelMap: LevelMap,
+  sourceSlot: number,
+  sourcePage: number,
+  destRoomSlot: number,
+  destPage: number,
+): LevelItem | null {
+  const blockIndex = levelMap.slotToBlock[destRoomSlot];
+  if (blockIndex === undefined) return null;
+  const block = levelMap.blocks[blockIndex];
+  if (!block) return null;
+  for (const item of block.items) {
+    if (!isRoutingItem(item)) continue;
+    if (tilePageOf(item, block) !== destPage) continue;
+    const dest = itemDestination(item);
+    if (dest?.slot !== sourceSlot) continue;
+    if (dest.page !== sourcePage) continue;
+    return item;
+  }
+  return null;
+}
+
+/**
+ * True if this item has a destination but no strict pair partner
+ * exists. The caller supplies the item's block so we can compute its
+ * page (needed for the strict check on the other side).
+ */
+export function isOrphan(
+  item: LevelItem,
+  itemBlock: LevelBlock,
+  itemSlot: number,
+  levelMap: LevelMap,
+): boolean {
+  const dest = itemDestination(item);
+  if (dest === null) return false;
+  const sourcePage = tilePageOf(item, itemBlock);
+  return findBackPointer(levelMap, itemSlot, sourcePage, dest.slot, dest.page) === null;
+}
+
+/**
+ * Scan the whole level map and return every orphaned routing item.
+ * An item is orphan iff it has a destination but no strict pair door
+ * (page + slot match on both sides) exists in that destination room.
+ *
+ * Called once per `history.revision` by the canvas (orphan badges) and
+ * by the export gate (blocks Download ROM when non-empty).
+ */
+export function buildOrphanIndex(levelMap: LevelMap): {
+  orphans: Set<LevelItem>;
+  count: number;
+} {
+  const orphans = new Set<LevelItem>();
+  for (let slot = 0; slot < levelMap.slotToBlock.length; slot++) {
+    const blockIndex = levelMap.slotToBlock[slot];
+    if (blockIndex === undefined) continue;
+    const block = levelMap.blocks[blockIndex];
+    if (!block) continue;
+    for (const item of block.items) {
+      if (!isRoutingItem(item)) continue;
+      const dest = itemDestination(item);
+      if (dest === null) continue;
+      const sourcePage = tilePageOf(item, block);
+      const pair = findBackPointer(levelMap, slot, sourcePage, dest.slot, dest.page);
+      if (!pair) orphans.add(item);
+    }
+  }
+  return { orphans, count: orphans.size };
+}
+
 export class SetItemDestinationCommand implements Command {
   readonly label: string;
   readonly targetSlot?: number;
@@ -145,5 +244,89 @@ export class SetItemDestinationCommand implements Command {
     if (this.noop) return;
     this.item.sourceBytes = this.oldBytes;
     this.block.byteLength -= this.byteDelta;
+  }
+}
+
+/** Produce new sourceBytes for `item` with destination (slot, page). */
+function buildBytesWithDestination(
+  item: LevelItem,
+  slot: number,
+  page: number,
+): Uint8Array {
+  const params = encodeDestinationBytes(slot, page);
+  return new Uint8Array([item.sourceBytes[0]!, item.sourceBytes[1]!, ...params]);
+}
+
+/**
+ * Pair two doors bidirectionally: itemA.dest = (slotB, pageOfItemB) and
+ * itemB.dest = (slotA, pageOfItemA).
+ *
+ * Whatever each item was previously paired with becomes **orphan**
+ * automatically — the old back-pointers still point here, but we now
+ * point somewhere else, and the detection falls out of `buildOrphanIndex`.
+ * That matches the SMB2 byte encoding: each entrance stores its own dest
+ * independently; the ROM has no symmetric link to maintain.
+ *
+ * Edge case: if `blockA === blockB` (both items in the same room),
+ * `block.byteLength += deltaA` followed by `block.byteLength += deltaB`
+ * both mutate the same live object — the cumulative delta is correct.
+ */
+export class PairItemsCommand implements Command {
+  readonly label: string;
+  readonly targetSlot?: number;
+
+  private readonly blockA: Mutable<LevelBlock>;
+  private readonly itemA: Mutable<LevelItem>;
+  private readonly blockB: Mutable<LevelBlock>;
+  private readonly itemB: Mutable<LevelItem>;
+  private readonly oldBytesA: Uint8Array;
+  private readonly newBytesA: Uint8Array;
+  private readonly oldBytesB: Uint8Array;
+  private readonly newBytesB: Uint8Array;
+  private readonly byteDeltaA: number;
+  private readonly byteDeltaB: number;
+
+  constructor(
+    blockA: LevelBlock,
+    itemA: LevelItem,
+    slotA: number,
+    blockB: LevelBlock,
+    itemB: LevelItem,
+    slotB: number,
+    targetSlot?: number,
+  ) {
+    this.blockA = blockA as Mutable<LevelBlock>;
+    this.itemA = itemA as Mutable<LevelItem>;
+    this.blockB = blockB as Mutable<LevelBlock>;
+    this.itemB = itemB as Mutable<LevelItem>;
+    this.oldBytesA = itemA.sourceBytes;
+    this.oldBytesB = itemB.sourceBytes;
+    this.targetSlot = targetSlot;
+
+    const pageA = tilePageOf(itemA, blockA);
+    const pageB = tilePageOf(itemB, blockB);
+
+    this.newBytesA = buildBytesWithDestination(itemA, slotB, pageB);
+    this.newBytesB = buildBytesWithDestination(itemB, slotA, pageA);
+    this.byteDeltaA = this.newBytesA.byteLength - this.oldBytesA.byteLength;
+    this.byteDeltaB = this.newBytesB.byteLength - this.oldBytesB.byteLength;
+
+    this.label = `Pair doors`;
+  }
+
+  execute(): void {
+    this.itemA.sourceBytes = this.newBytesA;
+    this.itemB.sourceBytes = this.newBytesB;
+    this.blockA.byteLength += this.byteDeltaA;
+    this.blockB.byteLength += this.byteDeltaB;
+    this.blockA.isEdited = true;
+    this.blockB.isEdited = true;
+  }
+
+  undo(): void {
+    this.itemA.sourceBytes = this.oldBytesA;
+    this.itemB.sourceBytes = this.oldBytesB;
+    this.blockA.byteLength -= this.byteDeltaA;
+    this.blockB.byteLength -= this.byteDeltaB;
   }
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Shared container used for LevelList, TileLibrary, EnemyLibrary,
- * PropertiesPanel, PaletteEditor, LevelLinksEditor.
+ * PropertiesPanel, PaletteEditor.
  *
  * Provides the common frame: surface color, border, optional title
  * header, scrollable content area. Individual panels compose their

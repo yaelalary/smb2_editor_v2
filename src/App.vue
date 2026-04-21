@@ -19,7 +19,6 @@ import PropertiesPanel from './components/PropertiesPanel.vue';
 import TileLibrary from './components/TileLibrary.vue';
 import EnemyLibrary from './components/EnemyLibrary.vue';
 import GroundPanel from './components/GroundPanel.vue';
-import LevelLinksEditor from './components/LevelLinksEditor.vue';
 import SharedEnemyBanner from './components/SharedEnemyBanner.vue';
 import MemoryBudgetIndicator from './components/MemoryBudgetIndicator.vue';
 import ConfirmationDialog from './components/ConfirmationDialog.vue';
@@ -325,7 +324,7 @@ function onDownload(): void {
       >
         <LevelList class="min-h-0 overflow-hidden border-b border-panel-border" />
 
-        <!-- Tool tabs: Tiles / Enemies / Ground / Advanced -->
+        <!-- Tool tabs: Tiles / Enemies / Ground -->
         <div class="flex border-b border-panel-border bg-panel-subtle">
           <button
             :class="[
@@ -360,17 +359,6 @@ function onDownload(): void {
           >
             Ground
           </button>
-          <button
-            :class="[
-              'flex-1 px-3 py-1.5 text-xs font-semibold transition-colors text-center',
-              editor.activeTool === 'advanced'
-                ? 'bg-panel text-ink border-b-2 border-accent'
-                : 'text-ink-muted hover:text-ink',
-            ]"
-            @click="editor.activeTool = 'advanced'"
-          >
-            Advanced
-          </button>
         </div>
 
         <TileLibrary
@@ -383,10 +371,6 @@ function onDownload(): void {
         />
         <GroundPanel
           v-else-if="editor.activeTool === 'ground'"
-          class="min-h-0 overflow-hidden"
-        />
-        <LevelLinksEditor
-          v-else
           class="min-h-0 overflow-hidden"
         />
       </div>

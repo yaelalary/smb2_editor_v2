@@ -9,7 +9,7 @@ import { ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { LevelItem } from '@/rom/model';
 
-export type EditorTool = 'tiles' | 'enemies' | 'ground' | 'advanced';
+export type EditorTool = 'tiles' | 'enemies' | 'ground';
 
 /**
  * Ground segment selection — either the header (sentinel) or a

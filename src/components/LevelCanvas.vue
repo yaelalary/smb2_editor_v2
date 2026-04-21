@@ -8,7 +8,7 @@
  *   - Delete/Backspace → DeleteItemCommand
  *   - Drag selected item → MoveItemCommand
  */
-import { ref, shallowRef, watch, onMounted, onUnmounted, computed, nextTick } from 'vue';
+import { ref, shallowRef, watch, onMounted, onUnmounted, computed, nextTick, toRaw } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
@@ -21,6 +21,8 @@ import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
+import { buildOrphanIndex, isRoutingItem } from '@/commands/routing-commands';
+import type { LevelMap } from '@/rom/model';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { MoveGroundSegmentCommand } from '@/commands/ground-commands';
 import { drawHerbOverlay, enemyAtlasForLevel, hasHerbOverlay, preloadHerbOverlays } from '@/ui/herb-overlays';
@@ -110,6 +112,22 @@ const block = computed<LevelBlock | null>(() => {
   void history.revision;
   const b = rom.activeBlock;
   return b ? (b as LevelBlock) : null;
+});
+
+/**
+ * Global orphan scan — every routing item (door / enterable jar) whose
+ * destination has no back-pointer. Rebuilt on every command so the
+ * canvas flags newly-broken pairs immediately. Also consumed by App.vue
+ * to gate the Download ROM button.
+ */
+const orphanSet = computed<Set<LevelItem>>(() => {
+  void history.revision;
+  const map = rom.levelMap;
+  if (!map) return new Set();
+  // `rom.levelMap` is wrapped in readonly() by the store; toRaw gives
+  // us the underlying mutable LevelMap so the items we put in the Set
+  // match the raw identity canvas iteration uses (via `activeBlock`).
+  return buildOrphanIndex(toRaw(map) as LevelMap).orphans;
 });
 
 // ─── Coordinate helpers ─────────────────────────────────────────────
@@ -870,6 +888,38 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       if (excluded.has(item)) continue;
       if (!hasHerbOverlay(item.itemId)) continue;
       drawHerbOverlay(ctx, item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, item.itemId, herbEnemyAtlas);
+    }
+
+    // ── Orphan door / jar warning ─────────────────────────────────
+    // Doors whose destination has no matching back-pointer are "one-
+    // way" and typically soft-lock the game. Mark them loudly so the
+    // user spots the broken pair before exporting (the export gate
+    // in App.vue also refuses to download when any orphan exists).
+    const orphans = orphanSet.value;
+    if (orphans.size > 0) {
+      for (const item of b.items) {
+        if (!isRoutingItem(item)) continue;
+        if (item.tileX < 0 || item.tileY < 0) continue;
+        if (!orphans.has(item)) continue;
+        const x = item.tileX * TILE_PX;
+        const y = item.tileY * TILE_PX;
+        // Red outline around the whole tile.
+        ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
+        ctx.lineWidth = 1.25;
+        ctx.strokeRect(x + 0.5, y + 0.5, TILE_PX - 1, TILE_PX - 1);
+        // Small "⚠" chip in the top-right corner so the glyph is
+        // unmistakable even when the outline overlaps a similar color.
+        const chipW = 7;
+        const chipH = 7;
+        const cx = x + TILE_PX - chipW - 1;
+        const cy = y + 1;
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.95)';
+        ctx.fillRect(cx, cy, chipW, chipH);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 6px monospace';
+        ctx.textBaseline = 'top';
+        ctx.fillText('!', cx + 2, cy + 1);
+      }
     }
 
     // ── Ground mode overlay ──────────────────────────────────────

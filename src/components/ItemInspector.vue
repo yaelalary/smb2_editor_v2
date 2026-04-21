@@ -440,18 +440,18 @@ const itemKindLabel = computed<string>(() => {
         + Create paired door…
       </button>
 
-      <!-- Spawn position: SMB2 places Mario at a position computed from
-           this door (A), not from the paired door. Surfacing it lets
-           the user spot a mismatch. If the linked door is in the wrong
-           place we also offer to snap it to the spawn tile. -->
+      <!-- Spawn position mismatch warning. The "Mario will arrive at"
+           line is noise when the pair is already clean, so we only
+           surface it when the linked door isn't at the spawn tile or
+           the source is orphan — i.e. when there's something to fix. -->
       <div
-        v-if="spawnPosition && destSlot !== null"
+        v-if="spawnPosition && destSlot !== null && !spawnMatchesPair"
         class="text-[10px] text-ink-muted leading-snug space-y-1"
       >
         <div>
           Mario will arrive at ({{ spawnPosition.tileX }}, {{ spawnPosition.tileY }}) in {{ slotLabel(destSlot) }}.
         </div>
-        <template v-if="backPointer && !spawnMatchesPair">
+        <template v-if="backPointer">
           <div class="text-amber-400">
             ⚠ The linked door is at ({{ backPointer.tileX }}, {{ backPointer.tileY }}) — move a door so the positions match.
           </div>

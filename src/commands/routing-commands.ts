@@ -258,18 +258,46 @@ function buildBytesWithDestination(
 }
 
 /**
- * Pair two doors bidirectionally: itemA.dest = (slotB, pageOfItemB) and
- * itemB.dest = (slotA, pageOfItemA).
+ * SMB2 runtime spawn position when entering a door at `sourceItem`'s
+ * position with destination page `destPage`.
+ *
+ *   pt = { 15 - (src.x % 16), src.y % 15 }
+ *   if dest is horizontal: pt.x += destPage * 16
+ *   else (vertical):       pt.y += destPage * 15
+ *
+ * Ported from the SMB2 C++ tool's "Create connected door" placement
+ * (`cleveldlg_handler.cpp:190-195`). The game computes this at runtime;
+ * the editor only exposes it to the user so they can see where Mario
+ * will actually appear — and decide whether to move doors to match.
+ */
+export function computeSpawnPosition(
+  sourceItem: LevelItem,
+  destBlock: LevelBlock,
+  destPage: number,
+): { tileX: number; tileY: number } {
+  const mirrorX = 15 - (sourceItem.tileX & 0x0f);
+  const withinY = sourceItem.tileY % 15;
+  if (destBlock.header.direction === 1) {
+    return { tileX: destPage * 16 + mirrorX, tileY: withinY };
+  }
+  return { tileX: mirrorX, tileY: destPage * 15 + withinY };
+}
+
+/**
+ * Pair two doors bidirectionally by rewriting their destination bytes.
+ * Neither item's position is moved — the SMB2 spawn formula ties
+ * Mario's emerge point to A's position, not to B's. Consequently the
+ * Inspector surfaces the computed spawn position and warns the user
+ * when it doesn't coincide with B's tile, so they can manually move a
+ * door if they want Mario to land on it.
  *
  * Whatever each item was previously paired with becomes **orphan**
- * automatically — the old back-pointers still point here, but we now
- * point somewhere else, and the detection falls out of `buildOrphanIndex`.
- * That matches the SMB2 byte encoding: each entrance stores its own dest
- * independently; the ROM has no symmetric link to maintain.
+ * automatically — its bytes still point here, but we no longer point
+ * back, and `findBackPointer` (strict page+slot check) rejects it.
  *
- * Edge case: if `blockA === blockB` (both items in the same room),
- * `block.byteLength += deltaA` followed by `block.byteLength += deltaB`
- * both mutate the same live object — the cumulative delta is correct.
+ * Edge case: `blockA === blockB` (both doors in the same room) —
+ * `block.byteLength += deltaA` then `+= deltaB` both mutate the same
+ * live object, which is the correct cumulative behavior.
  */
 export class PairItemsCommand implements Command {
   readonly label: string;
@@ -328,5 +356,92 @@ export class PairItemsCommand implements Command {
     this.itemB.sourceBytes = this.oldBytesB;
     this.blockA.byteLength -= this.byteDeltaA;
     this.blockB.byteLength -= this.byteDeltaB;
+  }
+}
+
+/**
+ * Create a new paired door in the destination room.
+ *
+ * Mirrors the C++ tool's "Create connected door" feature
+ * (cleveldlg_handler.cpp:163-204): places a fresh entrance at the
+ * mirror position in the target page so Mario lands on it, and sets
+ * both doors' destination bytes reciprocally.
+ *
+ * This is the only clean way to pair two doors in SMB2 without the
+ * user having to hand-position them — the paired door is created at
+ * exactly the tile where Mario will spawn when entering the source.
+ */
+export class CreatePairedDoorCommand implements Command {
+  readonly label: string;
+  readonly targetSlot?: number;
+
+  private readonly blockA: Mutable<LevelBlock>;
+  private readonly itemA: Mutable<LevelItem>;
+  private readonly destBlock: Mutable<LevelBlock>;
+  private readonly oldBytesA: Uint8Array;
+  private readonly newBytesA: Uint8Array;
+  private readonly byteDeltaA: number;
+  private readonly newItem: LevelItem;
+  private insertedIndex = -1;
+
+  constructor(
+    blockA: LevelBlock,
+    itemA: LevelItem,
+    slotA: number,
+    destBlock: LevelBlock,
+    destSlot: number,
+    destPage: number,
+    newDoorId: number,
+    targetSlot?: number,
+  ) {
+    this.blockA = blockA as Mutable<LevelBlock>;
+    this.itemA = itemA as Mutable<LevelItem>;
+    this.destBlock = destBlock as Mutable<LevelBlock>;
+    this.oldBytesA = itemA.sourceBytes;
+    this.targetSlot = targetSlot;
+
+    const pageA = tilePageOf(itemA, blockA);
+    const spawn = computeSpawnPosition(itemA, destBlock, destPage);
+
+    // A now points at the new door's page in the destination.
+    this.newBytesA = buildBytesWithDestination(itemA, destSlot, destPage);
+    this.byteDeltaA = this.newBytesA.byteLength - this.oldBytesA.byteLength;
+
+    // New door points back at A's page in A's room.
+    const newDoorBytes = new Uint8Array([
+      0, // position byte — recomputed by serializer from tileX/tileY.
+      newDoorId,
+      ...encodeDestinationBytes(slotA, pageA),
+    ]);
+    this.newItem = {
+      kind: 'entrance',
+      sourceBytes: newDoorBytes,
+      sourceRange: [0, 0],
+      tileX: spawn.tileX,
+      tileY: spawn.tileY,
+      itemId: newDoorId,
+    } as LevelItem;
+
+    this.label = `Create paired door → slot ${destSlot} page ${destPage}`;
+  }
+
+  execute(): void {
+    this.itemA.sourceBytes = this.newBytesA;
+    this.blockA.byteLength += this.byteDeltaA;
+    this.blockA.isEdited = true;
+    this.insertedIndex = this.destBlock.items.length;
+    this.destBlock.items.push(this.newItem);
+    this.destBlock.byteLength += this.newItem.sourceBytes.byteLength;
+    this.destBlock.isEdited = true;
+  }
+
+  undo(): void {
+    this.itemA.sourceBytes = this.oldBytesA;
+    this.blockA.byteLength -= this.byteDeltaA;
+    if (this.insertedIndex !== -1) {
+      this.destBlock.items.splice(this.insertedIndex, 1);
+      this.destBlock.byteLength -= this.newItem.sourceBytes.byteLength;
+      this.insertedIndex = -1;
+    }
   }
 }

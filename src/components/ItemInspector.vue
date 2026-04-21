@@ -10,22 +10,25 @@
  * automatically (it still points here, but we no longer point back).
  * `buildOrphanIndex` detects those orphans and the canvas flags them.
  */
-import { computed, nextTick, toRaw } from 'vue';
+import { computed, nextTick, ref, toRaw } from 'vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
 import { ITEM_NAMES } from '@/rom/nesleveldef';
-import { slotLabel, slotLabelVerbose } from '@/rom/level-layout';
+import { slotLabel, slotLabelVerbose, slotWorld, slotLevel } from '@/rom/level-layout';
 import { MAX_LEVELS, ENTRANCE_ITEM_IDS, ENTERABLE_JAR_IDS } from '@/rom/constants';
 import {
   itemDestination,
   findBackPointer,
   isRoutingItem,
   tilePageOf,
+  computeSpawnPosition,
   PairItemsCommand,
+  CreatePairedDoorCommand,
 } from '@/commands/routing-commands';
-import { DeleteItemCommand } from '@/commands/tile-commands';
+import { DeleteItemCommand, MoveItemCommand } from '@/commands/tile-commands';
 import type { LevelBlock, LevelItem, LevelMap } from '@/rom/model';
+import CreatePairedDoorDialog from './CreatePairedDoorDialog.vue';
 
 /** Jar ids used as warp zones (can target multiple destinations). */
 const WARP_JAR_IDS: ReadonlySet<number> = new Set([0x08]);
@@ -101,6 +104,35 @@ const pairState = computed<'paired' | 'orphan' | 'unpaired'>(() => {
   return backPointer.value ? 'paired' : 'orphan';
 });
 
+/**
+ * Where Mario will actually spawn in the destination room, per SMB2's
+ * runtime formula. Null when there's no destination.
+ *
+ * The game computes this from A's own position — the paired door's
+ * position isn't used. Surfacing it lets the user notice when the
+ * spawn point falls off the paired door and move doors accordingly.
+ */
+const spawnPosition = computed<{ tileX: number; tileY: number } | null>(() => {
+  void history.revision;
+  const it = item.value;
+  const dest = decodedDest.value;
+  const levelMap = rom.levelMap;
+  if (!it || !dest || !levelMap) return null;
+  const destBlockIndex = levelMap.slotToBlock[dest.slot];
+  if (destBlockIndex === undefined) return null;
+  const destBlock = toRaw(levelMap.blocks[destBlockIndex]);
+  if (!destBlock) return null;
+  return computeSpawnPosition(it, destBlock as LevelBlock, dest.page);
+});
+
+/** True when Mario's spawn lands exactly on the paired door. */
+const spawnMatchesPair = computed<boolean>(() => {
+  const bp = backPointer.value;
+  const sp = spawnPosition.value;
+  if (!bp || !sp) return false;
+  return bp.tileX === sp.tileX && bp.tileY === sp.tileY;
+});
+
 /** Human label for any routing item — used in the picker option text. */
 function doorLabel(it: LevelItem): string {
   const kind = ENTRANCE_ITEM_IDS.has(it.itemId) ? 'Door' : 'Jar';
@@ -124,6 +156,13 @@ interface DoorGroup {
 /**
  * All routing items in the ROM, grouped by their room.
  *
+ * Scoped to the **same level within the same world** (e.g. 1-1·X doors
+ * only link to other 1-1·X rooms). Cross-level or cross-world linking
+ * corrupts the ROM: each world carries its own palette/music/tile set
+ * and each level its own enemy stream, none of which are reloaded
+ * when the runtime crosses those boundaries. The current slot itself
+ * is excluded so the user can't pair with a door in the same zone.
+ *
  * `rom.levelMap` is exposed as `readonly()` from the store — nested
  * accesses return readonly proxies that refuse writes. We unwrap via
  * `toRaw` at each level so the items/blocks pushed into the options
@@ -137,8 +176,13 @@ const pickerGroups = computed<DoorGroup[]>(() => {
   const map = rom.levelMap;
   if (!map) return [];
   const rawMap = toRaw(map);
+  const currentWorld = slotWorld(rom.activeSlot);
+  const currentLevel = slotLevel(rom.activeSlot);
   const groups: DoorGroup[] = [];
   for (let slot = 0; slot < MAX_LEVELS; slot++) {
+    if (slot === rom.activeSlot) continue; // no same-zone linking
+    if (slotWorld(slot) !== currentWorld) continue;
+    if (slotLevel(slot) !== currentLevel) continue;
     const blockIndex = rawMap.slotToBlock[slot];
     if (blockIndex === undefined) continue;
     const rawBlock = toRaw(rawMap.blocks[blockIndex]);
@@ -195,6 +239,65 @@ const currentPairKey = computed<string>(() => {
   const idx = destBlock.items.indexOf(toRaw(bp));
   return idx >= 0 ? `${ds}:${idx}` : '';
 });
+
+/** Modal state for "+ Create paired door…". */
+const createPairedOpen = ref(false);
+
+function onCreatePairedConfirm(payload: { destSlot: number; destPage: number; doorId: number }): void {
+  const b = block.value;
+  const it = item.value;
+  const levelMap = rom.levelMap;
+  if (!b || !it || !levelMap) {
+    createPairedOpen.value = false;
+    return;
+  }
+  const rawMap = toRaw(levelMap);
+  const blockIndex = rawMap.slotToBlock[payload.destSlot];
+  if (blockIndex === undefined) {
+    createPairedOpen.value = false;
+    return;
+  }
+  const destBlock = toRaw(rawMap.blocks[blockIndex]) as LevelBlock | undefined;
+  if (!destBlock) {
+    createPairedOpen.value = false;
+    return;
+  }
+  history.execute(
+    new CreatePairedDoorCommand(
+      b, it, rom.activeSlot,
+      destBlock, payload.destSlot, payload.destPage, payload.doorId,
+      rom.activeSlot,
+    ),
+  );
+  createPairedOpen.value = false;
+}
+
+/**
+ * Move the currently-paired door to the position Mario will actually
+ * spawn on. Called from the warning's "Align" button. The pair has
+ * already been wired up (bytes OK); we just snap the partner's tile.
+ */
+function alignLinkedDoor(): void {
+  const bp = backPointer.value;
+  const sp = spawnPosition.value;
+  const dest = decodedDest.value;
+  const levelMap = rom.levelMap;
+  if (!bp || !sp || !dest || !levelMap) return;
+  const rawMap = toRaw(levelMap);
+  const blockIndex = rawMap.slotToBlock[dest.slot];
+  if (blockIndex === undefined) return;
+  const destBlock = toRaw(rawMap.blocks[blockIndex]);
+  if (!destBlock) return;
+  history.execute(
+    new MoveItemCommand(
+      destBlock as LevelBlock,
+      toRaw(bp),
+      sp.tileX,
+      sp.tileY,
+      dest.slot,
+    ),
+  );
+}
 
 function onPickerChange(e: Event): void {
   const b = block.value;
@@ -327,6 +430,40 @@ const itemKindLabel = computed<string>(() => {
         </optgroup>
       </select>
 
+      <!-- Create a new paired door in a target room — C++ tool's
+           "Create connected door" flow. Places the new door at the
+           computed spawn tile so Mario lands on it. -->
+      <button
+        class="w-full px-2 py-1 text-[10px] rounded border border-panel-border bg-panel-subtle hover:bg-panel text-ink-muted hover:text-ink transition-colors"
+        @click="createPairedOpen = true"
+      >
+        + Create paired door…
+      </button>
+
+      <!-- Spawn position: SMB2 places Mario at a position computed from
+           this door (A), not from the paired door. Surfacing it lets
+           the user spot a mismatch. If the linked door is in the wrong
+           place we also offer to snap it to the spawn tile. -->
+      <div
+        v-if="spawnPosition && destSlot !== null"
+        class="text-[10px] text-ink-muted leading-snug space-y-1"
+      >
+        <div>
+          Mario will arrive at ({{ spawnPosition.tileX }}, {{ spawnPosition.tileY }}) in {{ slotLabel(destSlot) }}.
+        </div>
+        <template v-if="backPointer && !spawnMatchesPair">
+          <div class="text-amber-400">
+            ⚠ The linked door is at ({{ backPointer.tileX }}, {{ backPointer.tileY }}) — move a door so the positions match.
+          </div>
+          <button
+            class="w-full px-2 py-1 text-[10px] rounded border border-amber-400/40 bg-amber-400/10 hover:bg-amber-400/20 text-amber-300 transition-colors"
+            @click="alignLinkedDoor"
+          >
+            Align linked door to ({{ spawnPosition.tileX }}, {{ spawnPosition.tileY }})
+          </button>
+        </template>
+      </div>
+
       <!-- Go to destination. Disabled (not hidden) when unpaired so the
            user still sees the affordance but can't act on nothing. -->
       <div class="flex">
@@ -349,5 +486,12 @@ const itemKindLabel = computed<string>(() => {
         Delete item
       </button>
     </div>
+
+    <CreatePairedDoorDialog
+      :open="createPairedOpen"
+      :current-slot="rom.activeSlot"
+      @confirm="onCreatePairedConfirm"
+      @cancel="createPairedOpen = false"
+    />
   </div>
 </template>

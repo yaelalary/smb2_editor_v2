@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SetItemDestinationCommand,
   PairItemsCommand,
+  CreatePairedDoorCommand,
   itemDestination,
   itemDestinationSlot,
   tilePageOf,
@@ -9,6 +10,7 @@ import {
   isOrphan,
   buildOrphanIndex,
   isRoutingItem,
+  computeSpawnPosition,
 } from '@/commands/routing-commands';
 import type { LevelBlock, LevelItem, LevelMap } from '@/rom/model';
 
@@ -382,19 +384,29 @@ describe('isOrphan / buildOrphanIndex', () => {
 
 describe('PairItemsCommand', () => {
   it('pairs two unpaired doors bidirectionally with correct pages', () => {
-    // itemA in slot 3, horizontal room, at tileX=20 → page 1
-    // itemB in slot 7, vertical room, at tileY=30 → page 2
+    // A at (20, 0) in horizontal slot 3 → page 1
+    // B at (0, 30) in vertical slot 7 → page 2 (30/15)
     const itemA = makeEntranceAt([0x00, 0x0a], 20, 0);
     const itemB = makeEntranceAt([0x00, 0x0a], 0, 30);
     const blockA = makeBlock([itemA], 1); // horizontal
     const blockB = makeBlock([itemB], 0); // vertical
     new PairItemsCommand(blockA, itemA, 3, blockB, itemB, 7).execute();
-    // A now points to slot 7 page 2
     expect(itemDestination(itemA)).toEqual({ slot: 7, page: 2, farPointer: false });
-    // B now points to slot 3 page 1
     expect(itemDestination(itemB)).toEqual({ slot: 3, page: 1, farPointer: false });
     expect(blockA.isEdited).toBe(true);
     expect(blockB.isEdited).toBe(true);
+  });
+
+  it('leaves both items at their original positions', () => {
+    const itemA = makeEntranceAt([0x00, 0x0a], 20, 0);
+    const itemB = makeEntranceAt([0x00, 0x0a], 0, 30);
+    const blockA = makeBlock([itemA], 1);
+    const blockB = makeBlock([itemB], 0);
+    new PairItemsCommand(blockA, itemA, 3, blockB, itemB, 7).execute();
+    expect(itemA.tileX).toBe(20);
+    expect(itemA.tileY).toBe(0);
+    expect(itemB.tileX).toBe(0);
+    expect(itemB.tileY).toBe(30);
   });
 
   it('promotes both items from 2-byte to 4-byte form', () => {
@@ -416,18 +428,15 @@ describe('PairItemsCommand', () => {
     const itemB = makeEntrance(0x00, 0x0a);
     const blockA = makeBlock([itemA]);
     const blockB = makeBlock([itemB]);
-    // itemA is in slot 3 (no far pointer), itemB is in slot 200 (far)
     new PairItemsCommand(blockA, itemA, 3, blockB, itemB, 200).execute();
-    // A targets slot 200 → 5-byte
     expect(itemA.sourceBytes.byteLength).toBe(5);
     expect(itemA.sourceBytes[2]).toBe(0xf5);
     expect(itemDestination(itemA)?.slot).toBe(200);
-    // B targets slot 3 → 4-byte
     expect(itemB.sourceBytes.byteLength).toBe(4);
     expect(itemDestination(itemB)?.slot).toBe(3);
   });
 
-  it('undo restores both sides of the pair', () => {
+  it('undo restores both sides of the pair (bytes only)', () => {
     const itemA = makeEntranceAt([0x00, 0x0a], 20, 0);
     const itemB = makeEntranceAt([0x00, 0x0a], 0, 30);
     const blockA = makeBlock([itemA], 1);
@@ -446,17 +455,93 @@ describe('PairItemsCommand', () => {
   });
 
   it('same-block pairing: byteLength deltas stack correctly', () => {
-    // Two unpaired doors in the SAME room pointing at each other
     const itemA = makeEntranceAt([0x00, 0x0a], 10, 0);
     const itemB = makeEntranceAt([0x00, 0x0a], 40, 0);
     const block = makeBlock([itemA, itemB], 1);
     const lenBefore = block.byteLength;
     new PairItemsCommand(block, itemA, 5, block, itemB, 5).execute();
-    // Both went from 2 bytes to 4 bytes → +4 total
     expect(block.byteLength).toBe(lenBefore + 4);
-    // A points to slot 5 at itemB's page (40/16=2)
     expect(itemDestination(itemA)).toEqual({ slot: 5, page: 2, farPointer: false });
-    // B points to slot 5 at itemA's page (10/16=0)
     expect(itemDestination(itemB)).toEqual({ slot: 5, page: 0, farPointer: false });
+    // Positions untouched.
+    expect(itemA.tileX).toBe(10);
+    expect(itemB.tileX).toBe(40);
+  });
+});
+
+describe('CreatePairedDoorCommand', () => {
+  it('places new door at the SMB2 spawn tile with reciprocal dest', () => {
+    // A at (14, 56) vertical. Pairing into a horizontal dest at page 8.
+    // Spawn formula: (8*16 + 15 - 14, 56%15) = (129, 11).
+    const itemA = makeEntranceAt([0x00, 0x0a], 14, 56);
+    const blockA = makeBlock([itemA], 0); // vertical
+    const destBlock = makeBlock([], 1); // horizontal, empty
+    new CreatePairedDoorCommand(
+      blockA, itemA, /*slotA*/ 0,
+      destBlock, /*destSlot*/ 2, /*destPage*/ 8, /*doorId*/ 0x0a,
+    ).execute();
+
+    // A now points to (2, 8).
+    expect(itemDestination(itemA)).toEqual({ slot: 2, page: 8, farPointer: false });
+
+    // A new door appeared in destBlock at the spawn tile.
+    expect(destBlock.items.length).toBe(1);
+    const created = destBlock.items[0]!;
+    expect(created.kind).toBe('entrance');
+    expect(created.itemId).toBe(0x0a);
+    expect(created.tileX).toBe(129);
+    expect(created.tileY).toBe(11);
+
+    // The new door points back at A's slot + A's page.
+    // A's page (vertical, Y=56) = 56/15 = 3.
+    expect(itemDestination(created)).toEqual({ slot: 0, page: 3, farPointer: false });
+
+    expect(blockA.isEdited).toBe(true);
+    expect(destBlock.isEdited).toBe(true);
+  });
+
+  it('undo removes the created door and restores A bytes', () => {
+    const itemA = makeEntranceAt([0x00, 0x0a], 14, 56);
+    const blockA = makeBlock([itemA], 0);
+    const destBlock = makeBlock([], 1);
+    const originalA = new Uint8Array(itemA.sourceBytes);
+    const lenABefore = blockA.byteLength;
+    const lenBBefore = destBlock.byteLength;
+    const cmd = new CreatePairedDoorCommand(
+      blockA, itemA, 0, destBlock, 2, 8, 0x0a,
+    );
+    cmd.execute();
+    expect(destBlock.items.length).toBe(1);
+    cmd.undo();
+    expect(destBlock.items.length).toBe(0);
+    expect(itemA.sourceBytes).toEqual(originalA);
+    expect(blockA.byteLength).toBe(lenABefore);
+    expect(destBlock.byteLength).toBe(lenBBefore);
+  });
+
+  it('uses 5-byte far pointer when destSlot > 150', () => {
+    const itemA = makeEntranceAt([0x00, 0x0a], 5, 3);
+    const blockA = makeBlock([itemA], 1);
+    const destBlock = makeBlock([], 1);
+    new CreatePairedDoorCommand(
+      blockA, itemA, 0, destBlock, 200, 0, 0x0a,
+    ).execute();
+    expect(itemA.sourceBytes.byteLength).toBe(5);
+    expect(itemA.sourceBytes[2]).toBe(0xf5);
+    expect(itemDestination(itemA)?.slot).toBe(200);
+  });
+});
+
+describe('computeSpawnPosition', () => {
+  it('horizontal destination: (destPage*16 + 15-sx%16, sy%15)', () => {
+    const src = makeEntranceAt([0x00, 0x0a], 20, 0); // sx%16 = 4, sy%15 = 0
+    const destH = makeBlock([], 1);
+    expect(computeSpawnPosition(src, destH, 2)).toEqual({ tileX: 2 * 16 + 11, tileY: 0 });
+  });
+
+  it('vertical destination: (15-sx%16, destPage*15 + sy%15)', () => {
+    const src = makeEntranceAt([0x00, 0x0a], 5, 3); // sx%16 = 5, sy%15 = 3
+    const destV = makeBlock([], 0);
+    expect(computeSpawnPosition(src, destV, 1)).toEqual({ tileX: 10, tileY: 18 });
   });
 });

@@ -956,11 +956,29 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     // Editor-only: each "Herb with X" item (ids 32..42, 43, 45) gets a
     // small enemy-atlas sprite painted above its tile showing what pops
     // out on pull. Nothing changes in the ROM; purely a visual aid.
+    //
+    // Herb groups (raw bytes 0x50..0x5F — library id 50, "Herb(s) with
+    // small vegetable") repeat horizontally: we paint one small-veg
+    // overlay per tile across the size+1 extent.
     const herbEnemyAtlas = enemyAtlasForLevel(b.header.enemyColor);
     for (const item of b.items) {
       if (item.kind !== 'regular') continue;
       if (item.tileX < 0 || item.tileY < 0) continue;
       if (excluded.has(item)) continue;
+      if ((item.itemId & 0xf0) === 0x50) {
+        const size = item.itemId & 0x0f;
+        for (let i = 0; i <= size; i++) {
+          drawHerbOverlay(
+            ctx,
+            (item.tileX + i) * TILE_PX,
+            item.tileY * TILE_PX,
+            TILE_PX,
+            34, // "Herb with small vegetable" — reuse its overlay entry
+            herbEnemyAtlas,
+          );
+        }
+        continue;
+      }
       if (!hasHerbOverlay(item.itemId)) continue;
       drawHerbOverlay(ctx, item.tileX * TILE_PX, item.tileY * TILE_PX, TILE_PX, item.itemId, herbEnemyAtlas);
     }

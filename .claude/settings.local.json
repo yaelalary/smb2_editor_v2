@@ -45,7 +45,8 @@
       "Bash(node extract-vines.mjs)",
       "Bash(node -e *)",
       "Read(//c/Users/Yael/Documents/Dev/Web/smb2/**)",
-      "Read(//c/Users/Yael/Documents/Dev/Web//**)"
+      "Read(//c/Users/Yael/Documents/Dev/Web//**)",
+      "Bash(grep -B100 \"{ 0x0e, 0x11 }\" /c/Users/Yael/Documents/Dev/Web/smb2/smb2/cpp/NES/nesleveldef.cpp)"
     ]
   }
 }

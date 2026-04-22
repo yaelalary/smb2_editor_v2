@@ -47,12 +47,20 @@ const block = computed<LevelBlock | null>(() => {
 });
 
 const streamZones = computed<LevelItem[]>(() => {
+  // Explicit dep on history.revision: block.items is mutated in place by
+  // commands (splice/push), and rom.levelMap is a shallowRef so deep
+  // mutations don't trigger reactivity. The parent `block` computed reads
+  // revision too but returns the same LevelBlock reference on every
+  // revision bump, so Vue skips downstream updates (identity comparison).
+  // Reading revision here forces this computed to re-run at every command.
+  void history.revision;
   const b = block.value;
   if (!b) return [];
   return b.items.filter((it) => it.kind === 'groundSet');
 });
 
 const zones = computed(() => {
+  void history.revision;
   const b = block.value;
   if (!b) return [];
   return computeGroundSegments(b); // index 0 = header zone (start=0)
@@ -87,6 +95,11 @@ const selectedZoneIdx = computed<number>(() => {
 });
 
 const selectedZoneShape = computed<number>(() => {
+  // Same reactivity trap as streamZones: SetGroundSetCommand reassigns
+  // item.sourceBytes to a new Uint8Array, but the item itself (inside
+  // a shallowRef chain) isn't reactive, so the shape read here wouldn't
+  // update after a pickShape() command. Force re-run on revision bump.
+  void history.revision;
   const b = block.value;
   if (!b) return 0;
   const s = selected.value;
@@ -224,6 +237,25 @@ function splitSelectedZone(): void {
     const fresh = streamZones.value.find((it) => it.absoluteStartPos === newStart);
     if (fresh) selected.value = fresh;
   });
+}
+
+/**
+ * Delete the zone at display index `idx` (1-based: idx=0 is the header
+ * zone and is never deletable). The stream item corresponding to that
+ * display zone is `streamZones[idx - 1]`. After delete, the previous
+ * zone's end implicitly extends to where the deleted zone started — no
+ * extra command needed, the UI's `zoneEnd()` already reads from the
+ * next stream item (or axisLength for the last one).
+ */
+function deleteZone(idx: number): void {
+  const b = block.value;
+  if (!b || idx <= 0) return;
+  const item = streamZones.value[idx - 1];
+  if (!item) return;
+  history.execute(new DeleteGroundSegmentCommand(b, item, rom.activeSlot));
+  // If the deleted zone was selected, fall back to the header zone so
+  // the controls panel has something coherent to display.
+  if (selected.value === item) selected.value = 'header';
 }
 
 // ─── Realistic thumbnail rendering ─────────────────────────────────
@@ -373,7 +405,7 @@ const SHAPE_GROUPS: ReadonlyArray<{ label: string; ids: ReadonlyArray<number> }>
             type="button"
             class="shrink-0 text-ink-muted hover:text-status-danger px-1 text-lg leading-none"
             title="Delete this zone"
-            @click.stop="() => { const it = streamZones[idx - 1]; if (it) { history.execute(new DeleteGroundSegmentCommand(block!, it, rom.activeSlot)); if (selected === it) selected = 'header'; } }"
+            @click.stop="deleteZone(idx)"
           >
             ×
           </button>

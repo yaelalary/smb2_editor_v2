@@ -1,0 +1,143 @@
+# SMB2 Technical Notes
+
+> Collected findings on SMB2 (USA PRG0) internals, relevant to level design in
+> this editor. Grows over sessions via the `smb2-technical-notes` skill.
+> Intended as raw material for a future in-app user guide.
+
+Entries are durable facts (ROM encoding, runtime behavior, rendering quirks), not decisions or history. Code references use repo-relative paths; C++ references point to the reference tool in the sibling `smb2/` repo.
+
+## Level data format
+
+### Regular item encoding (2 bytes)
+
+A plain `nliRegular` item occupies 2 bytes in the level stream: `[YYYYXXXX, itemId]`. High nibble of `byte[0]` is the X cell within the current page (0–15), low nibble is the Y row (0–15). Reference: [level-parser.ts:143-205](src/rom/level-parser.ts#L143-L205), C++ `cnesleveldata.cpp:80-100` (`SizeOfItem`).
+
+### Extended items (size in low nibble)
+
+Items with `itemId` in ranges `0x30–0x4F` and `0x50–0x5F` are variable-size: the low nibble of `byte[1]` encodes `size − 1`, repeated horizontally. Used for herb groups, multi-tile ladders (`0xA0–0xAF` / item `0x37`), and similar repeating objects. The editor's resize handle drives this nibble directly.
+
+### Stream opcodes (meta items)
+
+The item stream is not just a flat list of objects. Meta opcodes advance or reset cursor state:
+
+- `skipper` — advances to the next page.
+- `backToStart` — resets cursor to page 0 (used by doors that wrap the reader).
+- `groundSet` / `groundType` — change the ground definition for subsequent tiles.
+- `pointer` (`0xF5`) — declares a page-scoped transition target (see routing section).
+
+The parser walks these in order to compute absolute `(tileX, tileY)` for every regular/entrance item. Reference: [level-parser.ts:212-246](src/rom/level-parser.ts#L212-L246).
+
+### Two serialization modes
+
+The editor emits level bytes in one of two modes:
+
+- **Conservative** (`block.isEdited === false`): re-emit original `sourceBytes` verbatim — byte-identity guarantee for unmodified blocks.
+- **Constructive** (`block.isEdited === true`): walk items in stream order, drop old skippers/backToStart, regenerate cursor path from absolute positions. Direction-aware math: horizontal uses `floor(tileX / 16)` for page, vertical uses `floor(tileY / 15)`.
+
+Reference: [level-serializer.ts:153-307](src/rom/level-serializer.ts#L153-L307).
+
+## Doors, jars, pointers (routing)
+
+### Valid entrance item IDs
+
+Only these item IDs are entrances (routing-capable doors): `0x09, 0x0A, 0x0B, 0x13, 0x14, 0x15, 0x1C, 0x1D, 0x1E`. Any other `itemId` with entrance-looking bytes is malformed. The C++ tool hardcodes the same list in `cneseditor_editor.cpp:102-116`.
+
+### Enterable vs static jars
+
+Jars `0x06`, `0x07`, `0x08` are enterable and carry routing bytes like entrances. Jar `0x04` is static (decorative — Mario cannot enter). Jar `0x08` is specifically a warp jar, semantically distinct from `0x06`/`0x07` even though they share the routing byte format.
+
+### Entrance byte layout (4 or 5 bytes)
+
+An entrance item is either 4 or 5 bytes:
+
+- **4-byte (slot ≤ 150)**: `[YYYYXXXX, itemId, tens, (ones<<4)|page]` where `destSlot = tens*10 + (lastByte>>4)` and `destPage = lastByte & 0x0F`.
+- **5-byte (slot > 150, "far pointer")**: `[YYYYXXXX, itemId, 0xF5, tens, (ones<<4)|page]`. The `0xF5` sentinel in `byte[2]` promotes to the wider form.
+
+Threshold constant: `FAR_POINTER_THRESHOLD = 150` in [routing-commands.ts:32](src/commands/routing-commands.ts#L32). Decoding logic: [routing-commands.ts:42-69](src/commands/routing-commands.ts#L42-L69).
+
+### Pointer item (`0xF5`) — 3 bytes
+
+A standalone pointer is always 3 bytes: `[0xF5, tens, (ones<<4)|page]`. There is no 5-byte form for pointers. Unlike entrances, pointers have no tile position — they apply to the page they're declared on. Reference: [routing-commands.ts:82-96](src/commands/routing-commands.ts#L82-L96), C++ `cneseditor_editor.cpp:201-219` (`InsertPointer`).
+
+### One entrance or pointer per page (ROM constraint)
+
+The ROM can only handle one routing item (entrance OR pointer) per page. The C++ tool enforces this at insertion time via `CheckPagePointers` (`cneseditor_editor.cpp:4-14`), returning `FALSE` if the target page already has one. Violating this constraint leads to undefined in-game behavior.
+
+### Spawn position (mirror formula)
+
+When Mario goes through a door/jar in room A to room B, the ROM places him at a position computed **from A's coordinates only** — B's tile position is ignored. The formula:
+
+- `mirrorX = 15 − (A.x % 16)`
+- `withinY = A.y % 15`
+- Horizontal destination: `(destPage * 16 + mirrorX, withinY)`
+- Vertical destination: `(mirrorX, destPage * 15 + withinY)`
+
+This is why a "paired" door in the editor can be visually misaligned with where Mario actually spawns: the ROM doesn't care. Reference: [routing-commands.ts:337-348](src/commands/routing-commands.ts#L337-L348), C++ `cleveldlg_handler.cpp:190-202` (`OnNotify_Insert`).
+
+### No back-pointer is stored
+
+Each routing item stores only its own destination `(slot, page)`. There is no ROM-level "paired" relationship — pairing is purely conventional: if A points to B's room AND some item in B's room points back to A's, the pair is functional. If one side is missing, the room is entered but cannot be exited (soft-lock). The editor detects this via `findBackPointer` ([routing-commands.ts:186-206](src/commands/routing-commands.ts#L186-L206)); the C++ tool does not.
+
+### Far-pointer threshold matches slot count
+
+The threshold 150 exists because the ROM allocates the 4-byte form for low slot indices (fits in one byte split `tens/ones`) and needs the `0xF5` escape for high indices. Slots 150–209 require the 5-byte form.
+
+## Enemies
+
+### Enemy byte format
+
+Enemy stream uses 3 bytes per enemy: position byte + enemy-id + page. The enemy-id byte has bit 7 as a **hidden flag** (spawns only after Mario disturbs a specific trigger). The remaining 7 bits index into a 128-entry table with intentional duplication: indices 28–63 mirror indices 92–127. Boss IDs land in the 92–127 range.
+
+### Hawkmouth variants
+
+Hawkmouth spawns under three distinct enemy IDs: `45`, `66`, `67`. They render differently depending on alive vs defeated state — the editor shows the default (alive) variant; in-game animation swaps based on boss flags.
+
+## Vines and ladders
+
+### No routing bytes
+
+Climbable items `0x03, 0x05, 0x0C, 0x0D, 0x12, 0x37` are plain `nliRegular` 2-byte entries — no destination slot/page, no ROM-level pair. Mario climbs as long as a climb-tile is present at the next cell; the camera follows naturally.
+
+### Cross-page climb uses a Pointer
+
+To traverse from one page to another via a vine/ladder, a `Pointer` (`0xF5`) item on the **same page** as the climb-tile declares the target page. The vine itself is unchanged — the pointer is what teleports the camera/level state when Mario crosses the page boundary while climbing.
+
+## Herbs and pickups
+
+### Herb groups (extended items)
+
+Items in the `0x50–0x5F` range are herb groups. The low nibble of `byte[1]` encodes `size − 1`, repeated horizontally. A `0x53` byte places 4 herbs in a row. The editor renders each instance with its own small-vegetable overlay above the base tile.
+
+### Sub-space mushroom: two distinct item IDs
+
+Items `43` and `45` are both sub-space mushrooms — visually and behaviorally identical to the player (pulled like any herb, grants the sub-space warp effect). They exist as two separate IDs because each tracks an **independent "collected" flag bit** in the save state, so a level can mark up to two distinct mushroom pickups per room without them stepping on each other.
+
+### Sub-space mushrooms render rightmost-in-stream wins
+
+If multiple sub-space mushrooms with the **same ID** appear in a single room, only the **rightmost occurrence in the byte stream** is visible in-game — earlier same-ID instances overwrite each other in a single render slot. Priority is by stream order (the parser's emit sequence), not by screen coordinates. Placing the same ID twice in a room is effectively placing it once.
+
+## Boss rooms
+
+### Boss exit door is hardcoded in ASM
+
+In every boss room (Mouser, Triclyde, Fryguy, Clawgrip, Wart, Birdo mini-bosses), a White entrance sprite appears after the boss is defeated so Mario can exit. **This door is not stored in the level's item stream** — its position is hardcoded in the 6502 ASM that runs on boss defeat. The C++ reference tool does not surface it either.
+
+The editor keeps a manual registry in [boss-exit-doors.ts](src/rom/boss-exit-doors.ts) and renders a semi-transparent read-only ghost at the recorded position. Known positions (tile coords): Mouser 1-3·5 (24,11), Triclyde 2-3·7 (24,11), Mouser 3-3·9 (24,11), Fryguy 4-3·8 (8,11), Clawgrip 5-3·6 (24,7), Triclyde 6-3·7 (24,11), Wart 7-2·6 (40,11).
+
+## Rendering quirks (editor)
+
+### Sentinel metatiles display as "NN?"
+
+Metatile IDs `0xFB, 0xFC, 0xFD, 0xFE` have no graphical definition — they are placeholders. The C++ tool renders them as labeled pink squares (`11?`, `12?`, `13?`, `14?`) by design. The editor mirrors this convention; attempts to "upgrade" them to composed sprites would mask a real data error in the ROM.
+
+### Item atlas mapping by FX
+
+The level's `fx` field (0–3) selects which item atlas to use: `fx=0 → atlas 4`, `fx=1 → atlas 5`, `fx=2 → atlas 6`, `fx=3 → atlas 7`. Background tiles use the level's `gfx` directly; item/entity tiles use `gfx + 10`. Reference: [tile-reader.ts](src/rom/tile-reader.ts), C++ `cnesleveldata.cpp` (atlas dispatch).
+
+### Gamma and enemy mask on palette
+
+`UseGamma` post-processes a palette entry as `clr & 0x101010` then shifts — mimicking the NES's non-linear color ramp. `UseEnemyMask` applies a distinct ramp to enemy sprites so they stand apart from background palette. Both are part of the C++ atlas pipeline and are replicated in the editor's palette reader.
+
+## Palettes and graphics
+
+_No entries yet._

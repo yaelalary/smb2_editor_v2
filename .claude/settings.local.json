@@ -46,7 +46,14 @@
       "Bash(node -e *)",
       "Read(//c/Users/Yael/Documents/Dev/Web/smb2/**)",
       "Read(//c/Users/Yael/Documents/Dev/Web//**)",
-      "Bash(grep -B100 \"{ 0x0e, 0x11 }\" /c/Users/Yael/Documents/Dev/Web/smb2/smb2/cpp/NES/nesleveldef.cpp)"
+      "Bash(grep -B100 \"{ 0x0e, 0x11 }\" /c/Users/Yael/Documents/Dev/Web/smb2/smb2/cpp/NES/nesleveldef.cpp)",
+      "Bash(xargs -0 grep -l \"InsertEntrance\\\\|SetEntranceParam\\\\|CreateConnectedDoor\\\\|PairItem\")",
+      "Bash(xargs -0 grep -l \"mirror\\\\|pair\\\\|orphan\\\\|back.*pointer\\\\|return.*door\")",
+      "Bash(xargs -0 grep -l \"CNewItemDlg\\\\|cmiscdatadlg\\\\|boss.*exit\\\\|post.*boss\")",
+      "Edit(/.claude/skills/smb2-technical-notes/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2\\.claude\\skills"
     ]
   }
 }

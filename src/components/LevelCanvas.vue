@@ -22,6 +22,7 @@ import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS, VINE_LADDER_ITEM_IDS } from '@/rom/constants';
 import { buildOrphanIndex, isRoutingItem, pointerDestination, tilePageOf } from '@/commands/routing-commands';
+import { bossExitDoorForSlot } from '@/rom/boss-exit-doors';
 import type { LevelMap } from '@/rom/model';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { MoveGroundSegmentCommand } from '@/commands/ground-commands';
@@ -905,6 +906,51 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       renderItem(grid, item, romData.rom, rom.activeSlot, b.header);
     }
     drawCanvas(ctx, grid, palette);
+
+    // ── Boss exit door overlay (read-only ghost) ─────────────────
+    // In boss rooms, SMB2 spawns an exit door at runtime when the boss
+    // dies. That door isn't in the level data — its position is a
+    // hardcoded constant in the game's 6502 ASM. We render a faded
+    // "Entrance/exit (light right)" sprite (item 19) at the known tile
+    // so the level designer can see where it will appear. Item 19 has
+    // real sprite data (not a sentinel like 21/30), so it renders
+    // visibly. See `boss-exit-doors.ts` for the registry.
+    const bossDoor = bossExitDoorForSlot(rom.activeSlot);
+    if (bossDoor) {
+      const ghostGrid = new CanvasGrid(widthTiles, heightTiles, fx, gfx, isH);
+      const tempDoor: LevelItem = {
+        kind: 'entrance',
+        itemId: 19, // Entrance/exit (light right) — real sprite in ROM
+        tileX: bossDoor.tileX,
+        tileY: bossDoor.tileY,
+        sourceBytes: new Uint8Array([0, 19]),
+        sourceRange: [0, 0],
+      } as LevelItem;
+      renderItem(ghostGrid, tempDoor, romData.rom, rom.activeSlot, b.header);
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      drawCanvas(ctx, ghostGrid, palette);
+      ctx.restore();
+      // Amber label chip to the right of the 3-tile-wide sprite,
+      // vertically centered on the 2-tile-tall door.
+      const labelText = `Boss exit (${bossDoor.bossName})`;
+      ctx.font = 'bold 10px monospace';
+      const metrics = ctx.measureText(labelText);
+      const padX = 3, padY = 2;
+      const lw = metrics.width + padX * 2;
+      const lh = 12;
+      const bx = bossDoor.tileX * TILE_PX;
+      const by = bossDoor.tileY * TILE_PX;
+      // Item 19's footprint extends 2 tiles right of its anchor; put
+      // the chip past that so it doesn't overlap the sprite.
+      const lx = bx + TILE_PX * 3 + 2;
+      const ly = by + (TILE_PX * 2 - lh) / 2;
+      ctx.fillStyle = 'rgba(234, 179, 8, 0.92)';
+      ctx.fillRect(lx, ly, lw, lh);
+      ctx.fillStyle = '#1a1407';
+      ctx.textBaseline = 'top';
+      ctx.fillText(labelText, lx + padX, ly + padY);
+    }
 
     // ── Herb content badges ──────────────────────────────────────
     // Editor-only: each "Herb with X" item (ids 32..42, 43, 45) gets a

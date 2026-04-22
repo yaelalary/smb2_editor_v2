@@ -43,7 +43,9 @@
       "Bash(cp /tmp/extract-tile.mjs ./extract-tile.mjs)",
       "Bash(node extract-tile.mjs 1 a0)",
       "Bash(node extract-vines.mjs)",
-      "Bash(node -e *)"
+      "Bash(node -e *)",
+      "Read(//c/Users/Yael/Documents/Dev/Web/smb2/**)",
+      "Read(//c/Users/Yael/Documents/Dev/Web//**)"
     ]
   }
 }

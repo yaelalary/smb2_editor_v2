@@ -92,6 +92,18 @@ Enemy stream uses 3 bytes per enemy: position byte + enemy-id + page. The enemy-
 
 Hawkmouth spawns under three distinct enemy IDs: `45`, `66`, `67`. They render differently depending on alive vs defeated state — the editor shows the default (alive) variant; in-game animation swaps based on boss flags.
 
+### Phanto triggers on a global `key_held` flag, not per-instance pairing
+
+Phanto is enemy ID `23` (`0x17`). There is **no data-level linkage** between a Phanto and a key — the C++ reference tool has no Phanto-specific code beyond the name entry (`cnesenemydata.cpp:33`). At runtime, the ROM maintains a global "Mario is holding a key" flag in RAM. When Mario picks up any key (enemy IDs `61` / dup `125`), the flag sets and the Phanto in the current room transitions from idle (spinning in place at spawn) to chase state. Dropping the key or inserting it into a door clears the flag.
+
+Placement rules:
+
+- **Hard constraint: one Phanto per room.** Placing more than one in the same room corrupts the in-game behavior — animations stop playing correctly and enemies (including the Phantos themselves and other sprites) disappear at random. Observed empirically; the ROM's Phanto AI/animation logic is not designed for multiple simultaneous instances. Treat this as a placement limit the editor should eventually enforce.
+- **No spatial constraint**: within the one-per-room budget, the Phanto and the key can sit anywhere in the room; no proximity required.
+- **Room co-presence is enough to trigger**: a Phanto in a room with no key ever held will idle forever — the `key_held` flag has no way to fire locally.
+- **Key carries across doors**: Mario can enter a new room still holding the key, which immediately wakes a Phanto in the destination room even if that room contains no key of its own.
+- **Phanto is invincible**: veggies, shells, bombs, POW — nothing kills it. The only way to stop a Phanto is to drop the key.
+
 ### Enemy-slot POW block (`58` / dup `122`) has no observable runtime effect
 
 The enemy table lists a POW block at enemy IDs `58` and `122` (metatiles `[0x45, 0x11]`), distinct from the level-item POW block (item `1`, metatile `0x15`). Empirical testing: placing the enemy-slot POW in a level produces no interaction — Mario passes through it, enemies ignore it, the POW effect doesn't trigger. Only the **item-slot form** (Blocks category) is functional: placed on the BG layer, solid, activated when Mario hits it from below.

@@ -45,7 +45,10 @@ const CATEGORIES: EnemyCategory[] = [
   { label: 'Flying', ids: [10, 11, 12, 15, 16, 18, 19] },
   { label: 'Bosses', ids: [28, 29, 31, 33, 42, 44] },
   { label: 'Hazards', ids: [8, 22, 26, 27, 35, 36, 37, 38, 46, 47, 48, 49, 59] },
-  { label: 'Items', ids: [0, 50, 51, 53, 54, 58, 61, 62, 63, 64, 68, 69, 70] },
+  // Enemy-slot POW block (58 / dup 122) is omitted — has no runtime effect
+  // in vanilla SMB2 (see docs/smb2-technical-notes.md). Only the item-slot
+  // POW block (Blocks category in the tile library) is functional.
+  { label: 'Items', ids: [0, 50, 51, 53, 54, 61, 62, 63, 64, 68, 69, 70] },
   { label: 'Special', ids: [20, 21, 23, 24, 25, 40, 41, 43, 45, 55, 60, 65, 66, 67, 71, 72, 73, 74] },
 ];
 

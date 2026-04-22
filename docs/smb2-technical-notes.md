@@ -92,6 +92,16 @@ Enemy stream uses 3 bytes per enemy: position byte + enemy-id + page. The enemy-
 
 Hawkmouth spawns under three distinct enemy IDs: `45`, `66`, `67`. They render differently depending on alive vs defeated state — the editor shows the default (alive) variant; in-game animation swaps based on boss flags.
 
+### Enemy-slot POW block (`58` / dup `122`) has no observable runtime effect
+
+The enemy table lists a POW block at enemy IDs `58` and `122` (metatiles `[0x45, 0x11]`), distinct from the level-item POW block (item `1`, metatile `0x15`). Empirical testing: placing the enemy-slot POW in a level produces no interaction — Mario passes through it, enemies ignore it, the POW effect doesn't trigger. Only the **item-slot form** (Blocks category) is functional: placed on the BG layer, solid, activated when Mario hits it from below.
+
+The enemy-slot entry appears to be vestigial — present in the table (so the editor lists it) but not wired to any gameplay handler in vanilla SMB2. Treat it as a placeholder to avoid in level design.
+
+### Enemy-slot sprites render with transparent background
+
+Sprites from the enemy table (atlas `gfx+10`) render on the **sprite layer** where tile `0` is transparent. Level items from the item table render on the **background layer** where tile `0` is the level's BG color. This is why enemy-slot visuals look semi-transparent in the editor while item-slot visuals look filled — it's a faithful reflection of how the NES composites the two layers, not a rendering bug. Reference: [nesleveldef.ts:714-718](src/rom/nesleveldef.ts#L714-L718) for the enemy-sprite table.
+
 ## Vines and ladders
 
 ### No routing bytes

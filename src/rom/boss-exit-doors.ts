@@ -39,7 +39,13 @@ export interface BossExitDoor {
  * `Position (X, Y)` into a new object below.
  */
 export const BOSS_EXIT_DOORS: ReadonlyArray<BossExitDoor> = [
-  { slot: 24, tileX: 24, tileY: 11, bossName: 'Mouser' }, // 1-3·5
+  { slot: 24, tileX: 24, tileY: 11, bossName: 'Mouser' },   // 1-3·5
+  { slot: 56, tileX: 24, tileY: 11, bossName: 'Triclyde' }, // 2-3·7
+  { slot: 88, tileX: 24, tileY: 11, bossName: 'Mouser' },   // 3-3·9
+  { slot: 117, tileX: 8, tileY: 11, bossName: 'Fryguy' },   // 4-3·8
+  { slot: 145, tileX: 24, tileY: 7, bossName: 'Clawgrip' }, // 5-3·6
+  { slot: 176, tileX: 24, tileY: 11, bossName: 'Triclyde' }, // 6-3·7
+  { slot: 195, tileX: 40, tileY: 11, bossName: 'Wart' },     // 7-2·6
 ];
 
 /** Lookup the boss exit door registered for a slot, or null. */

@@ -3,6 +3,7 @@ import {
   SetItemDestinationCommand,
   PairItemsCommand,
   CreatePairedDoorCommand,
+  SetPointerDestinationCommand,
   itemDestination,
   itemDestinationSlot,
   tilePageOf,
@@ -11,6 +12,7 @@ import {
   buildOrphanIndex,
   isRoutingItem,
   computeSpawnPosition,
+  pointerDestination,
 } from '@/commands/routing-commands';
 import type { LevelBlock, LevelItem, LevelMap } from '@/rom/model';
 
@@ -59,6 +61,21 @@ function makeEntranceAt(bytes: number[], tileX: number, tileY: number): LevelIte
     tileX,
     tileY,
     itemId: bytes[1] ?? 0,
+  } as LevelItem;
+}
+
+function makePointer(slot: number, page: number, tileX = 0, tileY = 0): LevelItem {
+  const s = Math.max(0, Math.min(209, Math.floor(slot)));
+  const p = Math.max(0, Math.min(9, Math.floor(page))) & 0x0f;
+  const tens = Math.floor(s / 10);
+  const ones = s % 10;
+  return {
+    kind: 'pointer',
+    sourceBytes: new Uint8Array([0xf5, tens, (ones << 4) | p]),
+    sourceRange: [0, 0],
+    tileX,
+    tileY,
+    itemId: -1,
   } as LevelItem;
 }
 
@@ -543,5 +560,64 @@ describe('computeSpawnPosition', () => {
     const src = makeEntranceAt([0x00, 0x0a], 5, 3); // sx%16 = 5, sy%15 = 3
     const destV = makeBlock([], 0);
     expect(computeSpawnPosition(src, destV, 1)).toEqual({ tileX: 10, tileY: 18 });
+  });
+});
+
+describe('pointerDestination', () => {
+  it('decodes a plain pointer (slot ≤ 150)', () => {
+    // slot 42 → tens=4, ones=2. page=7. Bytes: [0xF5, 4, (2<<4)|7 = 0x27].
+    const ptr = makePointer(42, 7);
+    expect(pointerDestination(ptr)).toEqual({ slot: 42, page: 7, farPointer: false });
+  });
+
+  it('decodes a high-slot pointer (no 5-byte far form for pointers)', () => {
+    const ptr = makePointer(200, 3);
+    expect(pointerDestination(ptr)).toEqual({ slot: 200, page: 3, farPointer: false });
+  });
+
+  it('returns null for non-pointer items', () => {
+    const it = makeEntrance(0x00, 0x0a, 4, 0x20);
+    expect(pointerDestination(it)).toBe(null);
+  });
+
+  it('returns null if first byte is not 0xF5', () => {
+    const malformed = {
+      ...makePointer(10, 0),
+      sourceBytes: new Uint8Array([0x00, 1, 0x00]),
+    } as LevelItem;
+    expect(pointerDestination(malformed)).toBe(null);
+  });
+});
+
+describe('SetPointerDestinationCommand', () => {
+  it('updates slot and page, keeps byteLength constant', () => {
+    const ptr = makePointer(10, 0);
+    const block = makeBlock([ptr]);
+    const lenBefore = block.byteLength;
+    new SetPointerDestinationCommand(block, ptr, 42, 7).execute();
+    expect(pointerDestination(ptr)).toEqual({ slot: 42, page: 7, farPointer: false });
+    expect(block.byteLength).toBe(lenBefore); // pointer is always 3 bytes
+    expect(block.isEdited).toBe(true);
+  });
+
+  it('clamps slot to 0..209 and page to 0..9', () => {
+    const ptr = makePointer(10, 0);
+    const block = makeBlock([ptr]);
+    new SetPointerDestinationCommand(block, ptr, 500, 99).execute();
+    expect(pointerDestination(ptr)).toEqual({ slot: 209, page: 9, farPointer: false });
+    new SetPointerDestinationCommand(block, ptr, -5, -1).execute();
+    expect(pointerDestination(ptr)).toEqual({ slot: 0, page: 0, farPointer: false });
+  });
+
+  it('undo restores original bytes', () => {
+    const ptr = makePointer(10, 0);
+    const block = makeBlock([ptr]);
+    const original = new Uint8Array(ptr.sourceBytes);
+    const cmd = new SetPointerDestinationCommand(block, ptr, 42, 7);
+    cmd.execute();
+    expect(pointerDestination(ptr)).toEqual({ slot: 42, page: 7, farPointer: false });
+    cmd.undo();
+    expect(ptr.sourceBytes).toEqual(original);
+    expect(pointerDestination(ptr)).toEqual({ slot: 10, page: 0, farPointer: false });
   });
 });

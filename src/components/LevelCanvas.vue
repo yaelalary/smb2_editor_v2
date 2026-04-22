@@ -13,15 +13,15 @@ import { storeToRefs } from 'pinia';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
-import { levelDimensions, getFxForSlot } from '@/rom/level-layout';
+import { levelDimensions, getFxForSlot, slotLabel } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
 import type { LevelBlock, LevelItem, EnemyBlock, EnemyItem } from '@/rom/model';
 import { ENEMY_DIM } from '@/rom/nesleveldef';
 import { getWorldGfx } from '@/rom/tile-reader';
 import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
-import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
-import { buildOrphanIndex, isRoutingItem } from '@/commands/routing-commands';
+import { ENTRANCE_ITEM_IDS, VINE_LADDER_ITEM_IDS } from '@/rom/constants';
+import { buildOrphanIndex, isRoutingItem, pointerDestination, tilePageOf } from '@/commands/routing-commands';
 import type { LevelMap } from '@/rom/model';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
 import { MoveGroundSegmentCommand } from '@/commands/ground-commands';
@@ -103,6 +103,13 @@ const rubberBand = ref<{ x1: number; y1: number; x2: number; y2: number } | null
 type ChipRect = { item: LevelItem; x: number; y: number; w: number; h: number };
 let chipRects: ChipRect[] = [];
 
+/**
+ * Hit-rects for the pointer chips (page-level scroll-off transition
+ * badges). Rebuilt each draw. Clicking one selects the Pointer so the
+ * Inspector can edit its destination.
+ */
+let pointerChipRects: ChipRect[] = [];
+
 // Zone-chip drag state. `previewPos` is the clamped tile position the
 // boundary will snap to on mouseup. A ghost line is rendered at this
 // position during drag — no live ground reflow.
@@ -156,6 +163,14 @@ function cssFromEvent(e: MouseEvent): { x: number; y: number } | null {
 /** Zone-chip hit test against `chipRects` rebuilt each draw. */
 function hitTestChip(cssX: number, cssY: number): ChipRect | null {
   for (const cr of chipRects) {
+    if (cssX >= cr.x && cssX < cr.x + cr.w && cssY >= cr.y && cssY < cr.y + cr.h) return cr;
+  }
+  return null;
+}
+
+/** Pointer-chip hit test — rebuilt each draw, same structure as chipRects. */
+function hitTestPointerChip(cssX: number, cssY: number): ChipRect | null {
+  for (const cr of pointerChipRects) {
     if (cssX >= cr.x && cssX < cr.x + cr.w && cssY >= cr.y && cssY < cr.y + cr.h) return cr;
   }
   return null;
@@ -382,6 +397,20 @@ function onMouseDown(e: MouseEvent): void {
   mouseDownPos = tileFromEvent(e);
   isDraggingSelection = false;
   rubberBand.value = null;
+
+  // Pointer chip click — selects the Pointer item so the Inspector can
+  // edit its destination. Takes precedence over tile hit-test because
+  // chips live at the top of a page and could overlap a real tile there.
+  {
+    const css = cssFromEvent(e);
+    const pchip = css ? hitTestPointerChip(css.x, css.y) : null;
+    if (pchip) {
+      selectedItems.value = [pchip.item];
+      selectedEnemies.value = [];
+      mouseDownPos = null;
+      return;
+    }
+  }
 
   // Ground mode: grabbing a "Zone N" chip starts a drag-to-resize. The
   // ghost line renders at `previewPos` during drag — real commit on release.
@@ -922,6 +951,58 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       }
     }
 
+    // ── Pointer markers (page-level scroll-off transitions) ──────
+    // Pointer items (`0xF5`) are page-scoped in the ROM bytes — no tile
+    // position. But at runtime Mario triggers the transition *via* a
+    // specific item on that page: almost always a vine or ladder. To
+    // make the UI match the gameplay, we find the vine/ladder on the
+    // same page as the pointer and highlight its anchor tile. When no
+    // vine/ladder sits on the page (pipes, auto-transitions, edge
+    // cases), we fall back to the page's top-left tile — same
+    // convention the C++ tool uses for its pointer badge.
+    pointerChipRects = [];
+    for (const item of b.items) {
+      if (item.kind !== 'pointer') continue;
+      const dest = pointerDestination(item);
+      if (!dest) continue;
+      const isSelected = selectedItems.value.includes(item);
+      const ptrPage = tilePageOf(item, b);
+      // Find the vine/ladder on this same page that likely triggers
+      // the transition. First match wins; most pages have at most one.
+      const companion = b.items.find((it) =>
+        it.kind === 'regular'
+        && VINE_LADDER_ITEM_IDS.has(it.itemId)
+        && it.tileX >= 0 && it.tileY >= 0
+        && tilePageOf(it as LevelItem, b) === ptrPage,
+      );
+      const anchorTileX = companion ? companion.tileX : item.tileX;
+      const anchorTileY = companion ? companion.tileY : item.tileY;
+      const tx = anchorTileX * TILE_PX;
+      const ty = anchorTileY * TILE_PX;
+      // Tile-sized violet highlight (semi-transparent fill + outline).
+      ctx.fillStyle = isSelected ? 'rgba(192, 132, 252, 0.55)' : 'rgba(192, 132, 252, 0.3)';
+      ctx.fillRect(tx, ty, TILE_PX, TILE_PX);
+      ctx.strokeStyle = isSelected ? '#e9d5ff' : '#c084fc';
+      ctx.lineWidth = isSelected ? 1.5 : 1;
+      ctx.strokeRect(tx + 0.5, ty + 0.5, TILE_PX - 1, TILE_PX - 1);
+      // Destination label as a chip right next to the highlighted tile.
+      const labelText = `→ ${slotLabel(dest.slot)} p${dest.page}`;
+      ctx.font = 'bold 10px monospace';
+      const metrics = ctx.measureText(labelText);
+      const padX = 3, padY = 2;
+      const lw = metrics.width + padX * 2;
+      const lh = 12;
+      const lx = tx + TILE_PX + 2;
+      const ly = ty + (TILE_PX - lh) / 2;
+      ctx.fillStyle = isSelected ? '#c084fc' : 'rgba(192, 132, 252, 0.92)';
+      ctx.fillRect(lx, ly, lw, lh);
+      ctx.fillStyle = '#1a0a2e';
+      ctx.textBaseline = 'top';
+      ctx.fillText(labelText, lx + padX, ly + padY);
+      // Hit-rect covers both the violet tile AND the chip.
+      pointerChipRects.push({ item, x: tx, y: ty, w: TILE_PX + 2 + lw, h: TILE_PX });
+    }
+
     // ── Ground mode overlay ──────────────────────────────────────
     // When the Ground tool is active, draw a faint boundary line at
     // each stream segment's startPos and highlight the selected one.
@@ -1025,8 +1106,12 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     // Selection rings — wrap the full footprint for multi-tile items
     // (doors 1×2, light entrances 3×2, jars 1×2) so the user can see
     // exactly which door/jar is selected when several sit side by side.
-    // Single-tile items fall back to the 1×1 anchor box.
+    // Single-tile items fall back to the 1×1 anchor box. Pointers skip
+    // this ring: their tileX/tileY is a UI convention (top-left of
+    // page) and they already get a distinctive violet highlight that
+    // intensifies on selection.
     for (const item of selectedItems.value) {
+      if (item.kind === 'pointer') continue;
       if (item.tileX < 0 || item.tileY < 0) continue;
       const fp = ITEM_FOOTPRINTS[item.itemId];
       const x0 = (item.tileX + (fp?.ax ?? 0)) * TILE_PX;

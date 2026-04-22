@@ -74,6 +74,70 @@ export function itemDestinationSlot(item: LevelItem): number | null {
 }
 
 /**
+ * Decode the destination of a Pointer item (`kind === 'pointer'`). These
+ * are standalone 3-byte items `[0xF5, tens, (ones<<4)|page]` that redirect
+ * page-scroll traversals (e.g., climbing a vine off the top of a page
+ * into the next sub-level). Returns `null` if the bytes are malformed.
+ */
+export function pointerDestination(item: LevelItem): ItemDestination | null {
+  if (item.kind !== 'pointer') return null;
+  const bytes = item.sourceBytes;
+  if (bytes.length < 3) return null;
+  if (bytes[0] !== 0xf5) return null;
+  const tens = bytes[1]!;
+  const b2 = bytes[2]!;
+  const ones = (b2 >> 4) & 0x0f;
+  const page = b2 & 0x0f;
+  const slot = tens * 10 + ones;
+  if (slot >= 210) return null;
+  // Pointers are always 3-byte (no 5-byte far form — the 0xF5 opcode
+  // already identifies them as pointers).
+  return { slot, page, farPointer: false };
+}
+
+export class SetPointerDestinationCommand implements Command {
+  readonly label: string;
+  readonly targetSlot?: number;
+
+  private readonly block: Mutable<LevelBlock>;
+  private readonly item: Mutable<LevelItem>;
+  private readonly oldBytes: Uint8Array;
+  private readonly newBytes: Uint8Array;
+
+  constructor(
+    block: LevelBlock,
+    item: LevelItem,
+    newSlot: number,
+    newPage: number,
+    targetSlot?: number,
+  ) {
+    this.block = block as Mutable<LevelBlock>;
+    this.item = item as Mutable<LevelItem>;
+    this.oldBytes = item.sourceBytes;
+    this.targetSlot = targetSlot;
+
+    const s = Math.max(0, Math.min(209, Math.floor(newSlot)));
+    const p = Math.max(0, Math.min(9, Math.floor(newPage))) & 0x0f;
+    const tens = Math.floor(s / 10);
+    const ones = s % 10;
+    // Always 3-byte: [0xF5, tens, (ones << 4) | page]. No far-form.
+    this.newBytes = new Uint8Array([0xf5, tens, (ones << 4) | p]);
+
+    this.label = `Set pointer → slot ${s} page ${p}`;
+  }
+
+  execute(): void {
+    this.item.sourceBytes = this.newBytes;
+    // Pointer is always 3 bytes → byteLength unchanged.
+    this.block.isEdited = true;
+  }
+
+  undo(): void {
+    this.item.sourceBytes = this.oldBytes;
+  }
+}
+
+/**
  * Build the parameter bytes (everything after byte0/byte1) for the
  * given destination. Picks 4-byte or 5-byte form automatically based
  * on the slot and preserves the page nibble.

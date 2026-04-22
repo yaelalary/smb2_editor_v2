@@ -143,3 +143,18 @@ export const ENTRANCE_ITEM_IDS: ReadonlySet<number> = new Set([
  * routing. 0x06 / 0x07 are regular enterable jars; 0x08 is the warp jar.
  */
 export const ENTERABLE_JAR_IDS: ReadonlySet<number> = new Set([0x06, 0x07, 0x08]);
+
+/**
+ * Climbable-object ids (vines, ladders). These are plain 2-byte
+ * `nliRegular` items — unlike entrances, they encode no destination:
+ * Mario moves through them naturally as the camera scrolls. Recorded
+ * as a set so the Inspector can surface a short note explaining that
+ * there's nothing to configure.
+ *
+ *   0x03  piece of vine               0x0D  endless vine (no top)
+ *   0x05  ladder (1 square)           0x12  bottom of vine / to-top
+ *   0x0C  vine, extends to ground     0x37  long ladder (0xA0-range)
+ */
+export const VINE_LADDER_ITEM_IDS: ReadonlySet<number> = new Set([
+  0x03, 0x05, 0x0c, 0x0d, 0x12, 0x37,
+]);

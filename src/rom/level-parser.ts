@@ -266,6 +266,22 @@ function populateAbsolutePositions(items: LevelItem[], isHorizontal: boolean): v
         item.absoluteStartPos = pos;
         break;
       }
+      case 'pointer': {
+        // Pointers (`[0xF5, param1, param2]`) are page-scoped, not tile-
+        // scoped — they redirect the player when scrolling off that
+        // page. We anchor the item at the top-left of its owning page
+        // so the canvas can render it as a chip and the Inspector can
+        // select it. Page = deltaX / 16 (same cursor logic as groundSet).
+        const page = Math.floor(deltaX / 0x10);
+        if (isHorizontal) {
+          item.tileX = page * 16;
+          item.tileY = 0;
+        } else {
+          item.tileX = 0;
+          item.tileY = page * 15;
+        }
+        break;
+      }
       default:
         break;
     }

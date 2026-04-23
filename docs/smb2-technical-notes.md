@@ -152,6 +152,25 @@ The editor keeps a manual registry in [boss-exit-doors.ts](src/rom/boss-exit-doo
 
 Metatile IDs `0xFB, 0xFC, 0xFD, 0xFE` have no graphical definition — they are placeholders. The C++ tool renders them as labeled pink squares (`11?`, `12?`, `13?`, `14?`) by design. The editor mirrors this convention; attempts to "upgrade" them to composed sprites would mask a real data error in the ROM.
 
+### Ground tiles are per-world: same shape renders differently across worlds
+
+Ground tiles come from `getBgTile(rom, bgSet, bgType, world, isH)` ([tile-reader.ts:359](src/rom/tile-reader.ts#L359)). The function resolves a final tile ID from four inputs: `bgSet` (2-bit density derived from the zone's shape pattern, 0–3), `bgType` (the level's `groundType` field, 0–7), the level's `world` (0–6), and direction. Each world has its own ground tile pointer table in the ROM.
+
+Consequence: the **same** zone shape + `groundType` produces **visually and behaviorally different ground** depending on which world the level belongs to. A "solid fill" shape in World 1 (grass) renders as grass terrain; in World 2 (desert) it renders as desert sand; in World 3 (water) it renders as swimmable water; etc. There is no user-selectable "tile type" — the world is the gate.
+
+### Diggable sand is gated by world + tile ID (worlds 2 and 6 confirmed)
+
+In vanilla SMB2, the diggable sand (Mario can descend through it) appears in **World 2** (desert, slots 30–59) and **World 6** (slots 150–179, confirmed empirically via level 6-1·6). The "diggability" is not a property of a generic tile — the game's 6502 engine checks the exact tile ID under Mario against a hardcoded table. Only certain tile IDs produced by those worlds' ground tables (for specific `bgSet` / `bgType` combinations) are flagged as diggable.
+
+Worlds 2 and 6 share the same `fx=2` tileset variant, which is consistent with them producing the same diggable tile IDs from matching ground patterns.
+
+Implications:
+
+- **Sand is not a placeable library item.** It's a ground rendering emitted by the `groundSet` + `groundType` system, resolved through the level's world atlas.
+- **The trigger is world-gated.** The same zone shape and `groundType` in a non-digging world (1, 3, 4, 5, 7) renders as that world's native ground and the engine won't trigger the dig-down animation even if the sprite looks similar.
+- **No validation in the editor.** Placing a "sand zone" setup in a non-digging-world slot is byte-valid but won't produce diggable terrain at runtime. This is a level-design constraint, not a data constraint.
+- Whether additional worlds (not yet tested) also produce diggable sand for certain ground combos remains an open question — confirm empirically before assuming.
+
 ### Item atlas mapping by FX
 
 The level's `fx` field (0–3) selects which item atlas to use: `fx=0 → atlas 4`, `fx=1 → atlas 5`, `fx=2 → atlas 6`, `fx=3 → atlas 7`. Background tiles use the level's `gfx` directly; item/entity tiles use `gfx + 10`. Reference: [tile-reader.ts](src/rom/tile-reader.ts), C++ `cnesleveldata.cpp` (atlas dispatch).

@@ -346,12 +346,14 @@ function drawShape(el: unknown, shape: number, groundType: number, cellPx = 3): 
 }
 
 /**
- * Render a close-up of the single ground tile that `gt` produces in
- * the current level context. Uses bgSet=1 as the representative
- * "solid" density. Shows nothing (BG color only) when the tile ID is
- * 0x00 or 0xFF (empty/invalid — groundTypes 6/7 and some corner cases).
+ * 2×2 crop of the full shape preview — same tiles as drawShape would
+ * render, but only 2 rows (H) or 2 columns (V). The crop takes the
+ * last 2 non-zero entries of the shape bitmask (= the "body" of the
+ * ground, ignoring sky rows). Each tile is drawn at 32×32 (scale 2×)
+ * so the canvas is 64×64 — same footprint as before, but with bigger,
+ * more readable tiles.
  */
-function drawGroundTilePreview(el: unknown, gt: number, scale = 4): void {
+function drawGroundTilePreview(el: unknown, gt: number): void {
   if (!el) return;
   const canvas = el as HTMLCanvasElement;
   const romData = rom.romData;
@@ -368,35 +370,56 @@ function drawGroundTilePreview(el: unknown, gt: number, scale = 4): void {
   if (!palette) return;
   const world = Math.floor(rom.activeSlot / 30);
   const gfx = getWorldGfx(romData.rom, world);
+  const shape = selectedZoneShape.value;
 
-  const tileId = getBgTile(romData.rom, 1, gt, world, isH);
-  const key = `gtp:${gt}:${tileId}:${gfx}:${palette.nesIndices.join(',')}`;
+  const key = `gtp2x2:${gt}:shape${shape}:${gfx}:${palette.nesIndices.join(',')}`;
   if (canvas.dataset['drawn'] === key) return;
 
   const bgAtlas = getColorizedBgAtlas(gfx, palette);
   if (!bgAtlas) return;
 
-  const size = METATILE_SIZE * scale;
-  canvas.width = size;
-  canvas.height = size;
-  canvas.style.width = `${size}px`;
-  canvas.style.height = `${size}px`;
+  // Scan the shape's 15-entry bitmask from the end, collect the last 2
+  // non-zero entries (= the ground-body rows/cols, not sky above).
+  const dw = getBgSet(romData.rom, shape & 0x1f, isH);
+  const bitsets: number[] = [];
+  for (let i = 14; i >= 0 && bitsets.length < 2; i--) {
+    const bs = (dw >>> (30 - i * 2)) & 0x03;
+    if (bs !== 0) bitsets.unshift(bs);
+  }
+
+  const TILES = 2;
+  // Native canvas 32×32 (2×2 tiles at source 16×16 each). CSS upscales
+  // to 48×48 via `pixelated` so the button looks bigger than native but
+  // still fits the 4-col grid layout comfortably.
+  const nativeSize = TILES * METATILE_SIZE; // 32
+  const displaySize = 48;
+  canvas.width = nativeSize;
+  canvas.height = nativeSize;
+  canvas.style.width = `${displaySize}px`;
+  canvas.style.height = `${displaySize}px`;
   canvas.style.imageRendering = 'pixelated';
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
   ctx.fillStyle = palette.bgColorCss;
-  ctx.fillRect(0, 0, size, size);
+  ctx.fillRect(0, 0, nativeSize, nativeSize);
+  ctx.imageSmoothingEnabled = false;
 
-  if (tileId !== 0xff && tileId !== 0) {
+  for (let slot = 0; slot < bitsets.length; slot++) {
+    const bitset = bitsets[slot]!;
+    const tileId = getBgTile(romData.rom, bitset, gt, world, isH);
+    if (tileId === 0xff || tileId === 0) continue;
     const { sx, sy } = bgTileRect(tileId);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      bgAtlas,
-      sx, sy, METATILE_SIZE, METATILE_SIZE,
-      0, 0, size, size,
-    );
+    for (let other = 0; other < TILES; other++) {
+      const dx = isH ? other * METATILE_SIZE : slot * METATILE_SIZE;
+      const dy = isH ? slot * METATILE_SIZE : other * METATILE_SIZE;
+      ctx.drawImage(
+        bgAtlas,
+        sx, sy, METATILE_SIZE, METATILE_SIZE,
+        dx, dy, METATILE_SIZE, METATILE_SIZE,
+      );
+    }
   }
   canvas.dataset['drawn'] = key;
 }
@@ -685,7 +708,7 @@ function zonePhysics(idx: number): GroundPhysics {
             >
               <canvas
                 :key="`gt-${gt - 1}-${drawGen}`"
-                :ref="(el) => drawGroundTilePreview(el, gt - 1, 3)"
+                :ref="(el) => drawGroundTilePreview(el, gt - 1)"
                 class="rounded-sm"
               />
               <span

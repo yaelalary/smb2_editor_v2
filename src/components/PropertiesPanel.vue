@@ -62,6 +62,10 @@ interface FieldDef {
   display?: (v: number) => string;
 }
 
+// `groundSet` and `groundType` are intentionally absent — they're the
+// header zone's shape + type, fully covered by the Ground panel's
+// shape picker and Type dropdown (which also edit stream zones). Having
+// the same fields in two places was redundant and confused the scope.
 const FIELDS: FieldDef[] = [
   {
     key: 'direction',
@@ -74,8 +78,6 @@ const FIELDS: FieldDef[] = [
   { key: 'music', label: 'Music', min: 0, max: 3 },
   { key: 'palette', label: 'Palette', min: 0, max: 7 },
   { key: 'enemyColor', label: 'Enemy color', min: 0, max: 3 },
-  { key: 'groundSet', label: 'Ground set', min: 0, max: 31 },
-  { key: 'groundType', label: 'Ground type', min: 0, max: 7 },
   { key: 'objectType', label: 'Object type', min: 0, max: 15 },
 ];
 </script>

@@ -92,6 +92,14 @@ Enemy stream uses 3 bytes per enemy: position byte + enemy-id + page. The enemy-
 
 Hawkmouth spawns under three distinct enemy IDs: `45`, `66`, `67`. They render differently depending on alive vs defeated state — the editor shows the default (alive) variant; in-game animation swaps based on boss flags.
 
+### Bosses have per-world palettes (and per-world stats) independent of `enemyColor`
+
+The level header's `enemyColor` field (2 bits, 4 atlases) controls the palette of **regular enemies** — Shy Guy, Snifit, Cobrat, etc. **Bosses override this** at runtime: when a boss fight starts, the engine loads a dedicated per-world boss palette from a separate ROM table. Evidence: the reference tool exposes per-world boss data including health/jump/throw parameters (`cmiscdatadlg.h:63-76`, e.g., `0x00657F` = Mouser World 1 health, `0x006586` = Mouser World 3 health), implying parallel per-world tables exist for other attributes including palettes.
+
+Consequence: vanilla Mouser looks pink/red in 1-3·5 (World 1) but greenish in 3-3·9 (World 3), despite both rooms possibly sharing the same `enemyColor`. The palette difference is NOT stored in the level data — it's applied at runtime from a world-scoped boss table.
+
+Editor limitation: our canvas renders boss sprites through the standard `enemyColor`-based atlas ([LevelCanvas.vue:1327](src/components/LevelCanvas.vue#L1327)), so bosses appear in their "regular enemy" palette instead of their runtime boss palette. To fix this faithfully would require mapping boss enemy IDs (29=Mouser, 30=Triclyde, 31=Fryguy, 33=Clawgrip, etc. and their `92+` duplicates) to world-specific palette tables in the ROM, which aren't currently wired up.
+
 ### Phanto triggers on a global `key_held` flag, not per-instance pairing
 
 Phanto is enemy ID `23` (`0x17`). There is **no data-level linkage** between a Phanto and a key — the C++ reference tool has no Phanto-specific code beyond the name entry (`cnesenemydata.cpp:33`). At runtime, the ROM maintains a global "Mario is holding a key" flag in RAM. When Mario picks up any key (enemy IDs `61` / dup `125`), the flag sets and the Phanto in the current room transitions from idle (spinning in place at spawn) to chase state. Dropping the key or inserting it into a door clears the flag.

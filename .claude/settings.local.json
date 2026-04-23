@@ -50,10 +50,16 @@
       "Bash(xargs -0 grep -l \"InsertEntrance\\\\|SetEntranceParam\\\\|CreateConnectedDoor\\\\|PairItem\")",
       "Bash(xargs -0 grep -l \"mirror\\\\|pair\\\\|orphan\\\\|back.*pointer\\\\|return.*door\")",
       "Bash(xargs -0 grep -l \"CNewItemDlg\\\\|cmiscdatadlg\\\\|boss.*exit\\\\|post.*boss\")",
-      "Edit(/.claude/skills/smb2-technical-notes/**)"
+      "Edit(/.claude/skills/smb2-technical-notes/**)",
+      "Bash(grep -E \"\\\\.\\(h|cpp\\)$\")",
+      "Bash(grep -E \"\\\\.h$\")",
+      "Read(//c/Users/Yael/Documents/.claude/plans/**)",
+      "Bash(npx tsx *)"
     ],
     "additionalDirectories": [
-      "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2\\.claude\\skills"
+      "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2\\.claude\\skills",
+      "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2",
+      "C:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2"
     ]
   }
 }

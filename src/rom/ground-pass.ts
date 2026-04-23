@@ -39,9 +39,21 @@ export function computeGroundSegments(b: LevelBlock): GroundSegment[] {
   // populateAbsolutePositions in level-parser.ts. Reading it directly
   // (rather than recomputing from cursor) means editor-side moves of
   // regulars can't visually shift the ground segments.
+  //
+  // `groundType` opcode semantics (ported from C++ cneseditor_loader.cpp:96-101):
+  // a groundType opcode does TWO things:
+  //   1. Updates the carried-forward groundType for SUBSEQUENT groundSets.
+  //   2. **Retroactively** overwrites the most recent zone's groundType —
+  //      mirrors C++ `ItemFromList(iLastBgSet)->ChangeBgType(uGroundType)`.
+  // This retro-update is how vanilla SMB2 encodes per-zone physics & tile
+  // sets: each groundSet is immediately followed by a groundType that
+  // rewrites its own type. Without it, we'd carry `header.groundType`
+  // into every zone → wrong tile lookups and wrong rendering.
   for (const item of b.items) {
     if (item.kind === 'groundType') {
       currentGroundType = (item.sourceBytes[1] ?? 0) & 0x07;
+      const last = segments[segments.length - 1];
+      if (last) last.groundType = currentGroundType;
     } else if (item.kind === 'groundSet') {
       const gSet = (item.sourceBytes[1] ?? 0) & 0x1f;
       segments.push({

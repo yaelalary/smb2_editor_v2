@@ -32,6 +32,7 @@ import { activeDrag } from '@/ui/drag-state';
 import { renderItem } from '@/rom/item-renderer';
 import { CanvasGrid } from '@/rom/canvas-grid';
 import { computeGroundSegments, groundPass } from '@/rom/ground-pass';
+import { physicsForZone } from '@/rom/ground-physics';
 import { drawCanvas, drawCanvasDiff } from '@/rom/canvas-draw';
 import {
   getAtlasImage,
@@ -1118,7 +1119,18 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
         // the boundary. Numbering matches GroundPanel's 1-based "Zone N"
         // where the header (idx 0 in `zones`) = Zone 1 and stream zones
         // start at Zone 2 (i + 2 here since `i` indexes `groundStream`).
-        const labelText = `Zone ${i + 2}`;
+        // Append the runtime physics suffix when the registry knows it's
+        // not plain solid (diggable, quicksand, …). `segments[i + 1]`
+        // matches `groundStream[i]` — same stream order.
+        const zoneSeg = segments[i + 1];
+        const zonePhysics = zoneSeg
+          ? physicsForZone(
+              romData.rom, world, b.header.objectType,
+              zoneSeg.groundSet, zoneSeg.groundType, isH,
+            )
+          : 'solid';
+        const labelText =
+          zonePhysics === 'solid' ? `Zone ${i + 2}` : `Zone ${i + 2} · ${zonePhysics}`;
         ctx.font = 'bold 10px monospace';
         const metrics = ctx.measureText(labelText);
         const padX = 4, padY = 2;
@@ -1134,7 +1146,12 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
         chipRects.push({ item: gi, x: lx, y: ly, w: lw, h: lh });
       }
       // Label the header zone at the very start — it's Zone 1 in the panel.
-      const headerLabel = 'Zone 1';
+      const headerPhysics = physicsForZone(
+        romData.rom, world, b.header.objectType,
+        b.header.groundSet, b.header.groundType, isH,
+      );
+      const headerLabel =
+        headerPhysics === 'solid' ? 'Zone 1' : `Zone 1 · ${headerPhysics}`;
       ctx.font = 'bold 10px monospace';
       const hm = ctx.measureText(headerLabel);
       const hlw = hm.width + 8;

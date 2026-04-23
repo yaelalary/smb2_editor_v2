@@ -27,6 +27,17 @@ The item stream is not just a flat list of objects. Meta opcodes advance or rese
 
 The parser walks these in order to compute absolute `(tileX, tileY)` for every regular/entrance item. Reference: [level-parser.ts:212-246](src/rom/level-parser.ts#L212-L246).
 
+### `groundType` opcode retroactively rewrites the last groundSet's type
+
+When a `groundType` opcode (`0xF6`) is encountered in the stream, it does **two** things (ported from C++ `cneseditor_loader.cpp:96-101`, `ItemFromList(iLastBgSet)->ChangeBgType(uGroundType)`):
+
+1. Sets the carried-forward `groundType` for **subsequent** `groundSet` items.
+2. **Retroactively overwrites the most recent zone's `groundType`** — the last zone added (header zone if no stream `groundSet` yet, or the most recent stream `groundSet` otherwise).
+
+Vanilla SMB2 encodes per-zone ground type by emitting `groundSet` immediately followed by `groundType`, so each zone's type is set by the `groundType` opcode that trails it. Without the retro-rewrite step, the zone would inherit whatever `groundType` was carried from the previous zone (or the header), which resolves to wrong tile IDs in `getBgTile` and wrong rendering — e.g., 6-1·1 zone 2 would incorrectly resolve to tile `0xA0` (brown columns) instead of `0x8A` (yellow sand).
+
+Implemented in [ground-pass.ts::computeGroundSegments](src/rom/ground-pass.ts) — the loop updates `segments[segments.length - 1].groundType` when a `groundType` opcode is encountered.
+
 ### Two serialization modes
 
 The editor emits level bytes in one of two modes:
@@ -166,18 +177,25 @@ Ground tiles come from `getBgTile(rom, bgSet, bgType, world, isH)` ([tile-reader
 
 Consequence: the **same** zone shape + `groundType` produces **visually and behaviorally different ground** depending on which world the level belongs to. A "solid fill" shape in World 1 (grass) renders as grass terrain; in World 2 (desert) it renders as desert sand; in World 3 (water) it renders as swimmable water; etc. There is no user-selectable "tile type" — the world is the gate.
 
-### Diggable sand is gated by world + tile ID (worlds 2 and 6 confirmed)
+### Special sand physics are gated by (world, objectType, tile ID)
 
-In vanilla SMB2, the diggable sand (Mario can descend through it) appears in **World 2** (desert, slots 30–59) and **World 6** (slots 150–179, confirmed empirically via level 6-1·6). The "diggability" is not a property of a generic tile — the game's 6502 engine checks the exact tile ID under Mario against a hardcoded table. Only certain tile IDs produced by those worlds' ground tables (for specific `bgSet` / `bgType` combinations) are flagged as diggable.
+SMB2 has multiple "sand" physics — **quicksand** (Mario sinks, rises on jump, used in 6-3·2 zone 2 and 6-1·1 zone 2) and **diggable sand** (Mario descends on B+Down, used in 6-3·3 zone 5) — that are all rendered via the same ground system. Naive gating on `(world, tileId)` is **insufficient**: in World 6, tile `0xA0` under `objectType=0` is quicksand, but under `objectType=2` the same tile is diggable. The game's 6502 engine uses the level header's `objectType` field (4 bits) as a discriminator, effectively selecting a "physics theme" for the whole level.
 
-Worlds 2 and 6 share the same `fx=2` tileset variant, which is consistent with them producing the same diggable tile IDs from matching ground patterns.
+Confirmed data points (vanilla SMB2):
+
+| Slot | World | objectType | Zone groundSet/groundType | Tile ID | Physics |
+|---|---|---|---|---|---|
+| 6-3·2 zone 2 | 5 | 0 | 12 / 0 | `0x99` | quicksand |
+| 6-1·1 zone 2 | 5 | 0 | 13 / 3 | `0xA0` | quicksand |
+| 6-3·3 zone 5 | 5 | 2 | 27 / 3 | `0xA0` | diggable |
 
 Implications:
 
 - **Sand is not a placeable library item.** It's a ground rendering emitted by the `groundSet` + `groundType` system, resolved through the level's world atlas.
-- **The trigger is world-gated.** The same zone shape and `groundType` in a non-digging world (1, 3, 4, 5, 7) renders as that world's native ground and the engine won't trigger the dig-down animation even if the sprite looks similar.
-- **No validation in the editor.** Placing a "sand zone" setup in a non-digging-world slot is byte-valid but won't produce diggable terrain at runtime. This is a level-design constraint, not a data constraint.
-- Whether additional worlds (not yet tested) also produce diggable sand for certain ground combos remains an open question — confirm empirically before assuming.
+- **`objectType` is a level-wide physics switch** for special tiles. Two levels with identical visual ground can have opposite runtime behavior based on `objectType` alone.
+- **Registry keying**: the editor's `ground-physics.ts` uses `(world, objectType, tileId)` as the composite key. Capture via `scripts/identify-ground-physics.ts`.
+- **No validation in the editor.** Placing a "sand zone" setup in a slot whose `objectType` doesn't trigger the expected physics is byte-valid but won't behave as intended.
+- World 2 (desert) and other worlds may have their own `(objectType, tileId)` combos — not yet captured. Confirm empirically before asserting coverage.
 
 ### Item atlas mapping by FX
 

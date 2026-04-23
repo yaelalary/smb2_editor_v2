@@ -346,6 +346,62 @@ function drawShape(el: unknown, shape: number, groundType: number, cellPx = 3): 
 }
 
 /**
+ * Render a close-up of the single ground tile that `gt` produces in
+ * the current level context. Uses bgSet=1 as the representative
+ * "solid" density. Shows nothing (BG color only) when the tile ID is
+ * 0x00 or 0xFF (empty/invalid — groundTypes 6/7 and some corner cases).
+ */
+function drawGroundTilePreview(el: unknown, gt: number, scale = 4): void {
+  if (!el) return;
+  const canvas = el as HTMLCanvasElement;
+  const romData = rom.romData;
+  const b = rom.activeBlock;
+  if (!romData || !b) return;
+  void drawGen.value;
+
+  const isH = (b as { header: { direction: number } }).header.direction === 1;
+  const palette = readLevelPalette(
+    romData.rom,
+    rom.activeSlot,
+    (b as { header: { palette: number } }).header.palette,
+  );
+  if (!palette) return;
+  const world = Math.floor(rom.activeSlot / 30);
+  const gfx = getWorldGfx(romData.rom, world);
+
+  const tileId = getBgTile(romData.rom, 1, gt, world, isH);
+  const key = `gtp:${gt}:${tileId}:${gfx}:${palette.nesIndices.join(',')}`;
+  if (canvas.dataset['drawn'] === key) return;
+
+  const bgAtlas = getColorizedBgAtlas(gfx, palette);
+  if (!bgAtlas) return;
+
+  const size = METATILE_SIZE * scale;
+  canvas.width = size;
+  canvas.height = size;
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+  canvas.style.imageRendering = 'pixelated';
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.fillStyle = palette.bgColorCss;
+  ctx.fillRect(0, 0, size, size);
+
+  if (tileId !== 0xff && tileId !== 0) {
+    const { sx, sy } = bgTileRect(tileId);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      bgAtlas,
+      sx, sy, METATILE_SIZE, METATILE_SIZE,
+      0, 0, size, size,
+    );
+  }
+  canvas.dataset['drawn'] = key;
+}
+
+/**
  * Runtime physics the SELECTED zone would have if its `groundType` were
  * set to `gt`. Used to build the groundType dropdown's option labels so
  * the user sees "0 · solid", "1 · quicksand", etc. based on the current
@@ -376,6 +432,20 @@ function onGroundTypeChange(raw: string): void {
   const clamped = Math.max(0, Math.min(7, n));
   if (s === 'header') {
     if (b.header.groundType === clamped) return;
+    // If the first stream zone has no companion groundType opcode, our
+    // header change would leak to it via carry-forward. Pin it first
+    // with its current effective type so the change stays local to zone 1.
+    const firstStream = streamZones.value[0];
+    if (firstStream) {
+      const arrIdx = b.items.indexOf(firstStream);
+      const companion = b.items[arrIdx + 1];
+      if (!companion || companion.kind !== 'groundType') {
+        const currentType = zones.value[1]?.groundType ?? 0;
+        history.execute(
+          new SetGroundTypeCommand(b, firstStream, currentType, rom.activeSlot),
+        );
+      }
+    }
     history.execute(new SetLevelFieldCommand(b.header, 'groundType', clamped, rom.activeSlot));
   } else {
     const item = s as LevelItem;
@@ -593,24 +663,47 @@ function zonePhysics(idx: number): GroundPhysics {
           are always adjacent (no gaps, no overlaps).
         </div>
 
-        <!-- Ground type — controls physics (quicksand, diggable, …) -->
-        <div class="flex items-center gap-1 pt-1">
-          <span class="text-[10px] text-ink-muted w-12 shrink-0">Type</span>
-          <select
-            :value="groundTypeFor(selectedZoneIdx)"
-            class="flex-1 px-2 py-1 rounded bg-panel border border-panel-border
-                   text-xs font-mono focus:outline-none focus:border-accent"
-            :title="'Runtime ground type — changes physics and the rendered tile. See the ground-physics registry.'"
-            @change="(e) => onGroundTypeChange((e.target as HTMLSelectElement).value)"
-          >
-            <option
+        <!-- Ground type — controls BOTH the rendered tile AND physics.
+             Each button shows a realistic preview of what the zone
+             would look like with that type (same shape, varying type). -->
+        <div class="pt-1 space-y-1">
+          <span class="text-[10px] text-ink-muted">Type</span>
+          <div class="grid grid-cols-4 gap-1">
+            <button
               v-for="gt in 8"
               :key="gt - 1"
-              :value="gt - 1"
+              type="button"
+              :title="groundTypeOptionLabel(gt - 1)"
+              :class="[
+                'relative flex items-center justify-center p-0.5 rounded border transition-colors',
+                'hover:bg-panel-subtle cursor-pointer',
+                groundTypeFor(selectedZoneIdx) === gt - 1
+                  ? 'border-accent bg-accent/10'
+                  : 'border-panel-border hover:border-accent/50',
+              ]"
+              @click="onGroundTypeChange(String(gt - 1))"
             >
-              {{ groundTypeOptionLabel(gt - 1) }}
-            </option>
-          </select>
+              <canvas
+                :key="`gt-${gt - 1}-${drawGen}`"
+                :ref="(el) => drawGroundTilePreview(el, gt - 1, 3)"
+                class="rounded-sm"
+              />
+              <span
+                class="absolute top-0 left-0 text-[8px] font-bold leading-none px-1 py-px
+                       rounded-br-sm bg-black/60 text-white"
+              >
+                {{ gt - 1 }}
+              </span>
+              <span
+                v-if="physicsForGroundType(gt - 1) !== 'solid'"
+                class="absolute bottom-0 right-0 text-[8px] font-bold leading-none px-1 py-px
+                       rounded-tl-sm text-black"
+                :class="physicsForGroundType(gt - 1) === 'diggable' ? 'bg-amber-500' : 'bg-cyan-500'"
+              >
+                {{ physicsForGroundType(gt - 1) === 'diggable' ? 'DIG' : 'QS' }}
+              </span>
+            </button>
+          </div>
         </div>
       </div>
 

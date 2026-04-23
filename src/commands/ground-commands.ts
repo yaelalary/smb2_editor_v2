@@ -12,7 +12,8 @@
  */
 
 import type { Command, Mutable } from './types';
-import type { ByteRange, LevelBlock, LevelItem } from '@/rom/model';
+import type { ByteRange, LevelBlock, LevelItem } from '../rom/model';
+import { computeGroundSegments } from '../rom/ground-pass';
 
 /**
  * Change a stream zone's `groundType` (0..7) by modifying the companion
@@ -33,6 +34,15 @@ export class SetGroundTypeCommand implements Command {
   private readonly newType: number;
   private oldCompanionBytes: Uint8Array | null = null;
   private insertedCompanion: LevelItem | null = null;
+  // Some vanilla levels (e.g., 6-3·3) have stream zones without their
+  // own companion `groundType` opcode — they inherit the carried-forward
+  // value. Changing the target zone's type would leak forward to those
+  // orphan zones via carry-forward. To block the leak, we PIN the next
+  // zone explicitly with its current effective type when it has no
+  // companion of its own. One pin is enough: zones further down then
+  // carry forward from the pinned value (= their original effective
+  // type), so the chain is preserved.
+  private pinnedNextCompanion: LevelItem | null = null;
 
   constructor(
     block: LevelBlock,
@@ -49,10 +59,42 @@ export class SetGroundTypeCommand implements Command {
 
   execute(): void {
     const arr = this.block.items as LevelItem[];
-    const idx = arr.indexOf(this.zoneItem);
-    if (idx === -1) return;
-    const companion = arr[idx + 1];
-    if (companion && companion.kind === 'groundType') {
+    const targetIdx = arr.indexOf(this.zoneItem);
+    if (targetIdx === -1) return;
+
+    // Step 1: if the NEXT groundSet lacks its own companion, pin it
+    // with its current effective type to block forward leak.
+    let nextGsIdx = -1;
+    for (let i = targetIdx + 1; i < arr.length; i++) {
+      if (arr[i]!.kind === 'groundSet') { nextGsIdx = i; break; }
+    }
+    if (nextGsIdx !== -1) {
+      const nextExistingCompanion = arr[nextGsIdx + 1];
+      if (!nextExistingCompanion || nextExistingCompanion.kind !== 'groundType') {
+        const segs = computeGroundSegments(this.block);
+        const streamZones = arr.filter((it) => it.kind === 'groundSet');
+        const nextStreamIdx = streamZones.indexOf(arr[nextGsIdx]!);
+        // segs[0] = header, segs[1+] = stream zones. The next zone's
+        // segment is at index nextStreamIdx + 1.
+        const nextCurrentType = segs[nextStreamIdx + 1]?.groundType ?? 0;
+        this.pinnedNextCompanion = {
+          kind: 'groundType',
+          sourceBytes: new Uint8Array([0xf6, nextCurrentType & 0x07]),
+          sourceRange: [0, 0] as ByteRange,
+          tileX: -1,
+          tileY: -1,
+          itemId: -1,
+        };
+        arr.splice(nextGsIdx + 1, 0, this.pinnedNextCompanion);
+        this.block.byteLength += 2;
+        // Inserting after nextGsIdx doesn't shift targetIdx, so we can
+        // keep using it below.
+      }
+    }
+
+    // Step 2: modify/insert the target zone's own companion.
+    const companion = arr[targetIdx + 1];
+    if (companion && companion.kind === 'groundType' && companion !== this.pinnedNextCompanion) {
       this.oldCompanionBytes = new Uint8Array(companion.sourceBytes);
       (companion as { sourceBytes: Uint8Array }).sourceBytes = new Uint8Array([
         0xf6,
@@ -67,7 +109,7 @@ export class SetGroundTypeCommand implements Command {
         tileY: -1,
         itemId: -1,
       };
-      arr.splice(idx + 1, 0, this.insertedCompanion);
+      arr.splice(targetIdx + 1, 0, this.insertedCompanion);
       this.block.byteLength += 2;
     }
     this.block.isEdited = true;
@@ -75,6 +117,7 @@ export class SetGroundTypeCommand implements Command {
 
   undo(): void {
     const arr = this.block.items as LevelItem[];
+    // Reverse Step 2 first (target companion).
     if (this.insertedCompanion) {
       const compIdx = arr.indexOf(this.insertedCompanion);
       if (compIdx !== -1) {
@@ -82,16 +125,24 @@ export class SetGroundTypeCommand implements Command {
         this.block.byteLength -= 2;
       }
       this.insertedCompanion = null;
-      return;
-    }
-    if (this.oldCompanionBytes) {
+    } else if (this.oldCompanionBytes) {
       const idx = arr.indexOf(this.zoneItem);
-      if (idx === -1) return;
-      const companion = arr[idx + 1];
-      if (companion && companion.kind === 'groundType') {
-        (companion as { sourceBytes: Uint8Array }).sourceBytes = this.oldCompanionBytes;
+      if (idx !== -1) {
+        const companion = arr[idx + 1];
+        if (companion && companion.kind === 'groundType') {
+          (companion as { sourceBytes: Uint8Array }).sourceBytes = this.oldCompanionBytes;
+        }
       }
       this.oldCompanionBytes = null;
+    }
+    // Then reverse Step 1 (pin next).
+    if (this.pinnedNextCompanion) {
+      const compIdx = arr.indexOf(this.pinnedNextCompanion);
+      if (compIdx !== -1) {
+        arr.splice(compIdx, 1);
+        this.block.byteLength -= 2;
+      }
+      this.pinnedNextCompanion = null;
     }
   }
 }

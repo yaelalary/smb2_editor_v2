@@ -379,6 +379,33 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     expect(undoneSegs[1]!.groundType).toBe(originalType);
   });
 
+  it('setGroundType blocks forward leak to orphan next zones', () => {
+    // Slot 172 (6-3·3) has orphan stream zones — no companion groundType
+    // opcodes. Without the pin-next fix, changing one zone's type would
+    // cascade to ALL subsequent orphan zones.
+    const rom = loadRom();
+    const block = getBlockForSlot(rom, 5 * 30 + 2 * 10 + 2); // 6-3·3 → slot 172
+    const streamZones = block.items.filter((it) => it.kind === 'groundSet');
+    // Need at least 3 stream zones for a meaningful test.
+    if (streamZones.length < 3) return;
+
+    const before = computeGroundSegments(block).map((z) => z.groundType);
+    const targetStreamIdx = 2; // zone 4 in the UI
+    const target = streamZones[targetStreamIdx]!;
+    const oldType = before[targetStreamIdx + 1]!;
+    const newType = (oldType + 3) % 8;
+
+    new SetGroundTypeCommand(block, target, newType).execute();
+
+    const after = computeGroundSegments(block).map((z) => z.groundType);
+    // Only the target zone changes.
+    expect(after[targetStreamIdx + 1]).toBe(newType);
+    for (let i = 0; i < before.length; i++) {
+      if (i === targetStreamIdx + 1) continue;
+      expect(after[i], `zone ${i + 1} should be unchanged`).toBe(before[i]);
+    }
+  });
+
   it('setGroundType inserts a groundType opcode if the zone has none', () => {
     // Construct a block with a groundSet that has NO companion — simulates
     // a zone the user inserted before we started pairing them, or a

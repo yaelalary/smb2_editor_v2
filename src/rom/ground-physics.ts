@@ -56,10 +56,12 @@ export interface PhysicsEntry {
  * vanilla ROM fixture.
  */
 export const GROUND_PHYSICS: ReadonlyArray<PhysicsEntry> = [
-  // World 6, objectType=0 — quicksand theme. After the groundType retro-
-  // update fix in ground-pass.ts, both 6-3·2 and 6-1·1 zone 2 resolve
-  // to tile 0x8A (not 0x99/0xA0 as before the fix).
-  { world: 5, objectType: 0, tileId: 0x8a, physics: 'quicksand', notes: 'confirmed in 6-3·2 zone 2 and 6-1·1 zone 2' },
+  // World 6, objectType=0 — quicksand theme. Vanilla encodes two
+  // visually-identical quicksand tile IDs (0x8A for groundType=1 and
+  // 0x8B for groundType=2). Tile 0x99 (groundType=0) is plain walkable
+  // sand, not quicksand.
+  { world: 5, objectType: 0, tileId: 0x8a, physics: 'quicksand', notes: 'confirmed in 6-3·2 zone 2 and 6-1·1 zone 2 (groundType=1)' },
+  { world: 5, objectType: 0, tileId: 0x8b, physics: 'quicksand', notes: 'confirmed in 6-3·2 zone 4 (groundType=2)' },
   // World 6, objectType=2 — diggable theme.
   { world: 5, objectType: 2, tileId: 0xa0, physics: 'diggable', notes: 'confirmed in 6-3·3 zone 5' },
 ];

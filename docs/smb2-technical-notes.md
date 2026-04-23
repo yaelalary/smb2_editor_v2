@@ -27,6 +27,30 @@ The item stream is not just a flat list of objects. Meta opcodes advance or rese
 
 The parser walks these in order to compute absolute `(tileX, tileY)` for every regular/entrance item. Reference: [level-parser.ts:212-246](src/rom/level-parser.ts#L212-L246).
 
+### Zone physics is per-zone, not per-zone-index
+
+Each ground zone in SMB2 has its physics fully determined by its own `groundType` (3 bits) combined with the level's world and `objectType`. There is **no rule like "zone 2 is always quicksand"** — zones are independent. Two adjacent zones can share a `groundType` (so share physics) but that's a level-design choice, not a structural constraint.
+
+Practical consequence for the editor: the "Zone N" numbering in the Ground panel is a **display-only 1-based index** (re-numbered on render). Inserting, deleting, or reordering zones doesn't re-assign physics across zones — each zone keeps its own `groundType` through edits. When the user deletes zone 2 (say, a quicksand zone), the former zone 3 (walkable) slides up to be the new "Zone 2" in the UI, but its physics stays walkable.
+
+### `groundType` selects BOTH the visual tile AND the physics, simultaneously
+
+The 3-bit `groundType` field per zone (header for zone 1, `groundType` opcode value for stream zones) is a combined **visual + physics** selector. It doesn't just pick a behavior — it picks the rendered tile via `getBgTile(bgSet, groundType, world, isH)`, and the game's 6502 then interprets that tile ID for both drawing AND collision.
+
+Three cases you encounter in vanilla:
+
+1. **Same visual, different physics** — e.g., in World 6, `groundType=0` renders tile `0x99` (yellow dotted sand, walkable), `groundType=1` renders tile `0x8A`, and `groundType=2` renders tile `0x8B` — all three are pixel-identical sand, but only gT=0 is walkable; gT=1 and gT=2 are quicksand. This is intentional to let level designers hide quicksand in innocent-looking sand.
+2. **Different visual, different physics** — e.g., World 6 `groundType=3` renders tile `0xA0` (brick-column pattern) which is diggable. The distinct visual tells the player "this tile is different — dig here".
+3. **Mixed visuals via bitset** — some `groundType` values (like `5` in World 6) return *different* tile IDs depending on the density bitset (1, 2, or 3) — producing a multi-tile visual variant in a single zone.
+
+Editor consequence: switching `groundType` on a zone changes BOTH the ground rendering AND the runtime physics in lockstep. The "Type" dropdown in the Ground panel is therefore a single control with two orthogonal but coupled effects.
+
+### Per-zone `groundType` is designed-in and editable
+
+The `groundType` field is 3 bits, natively per-zone: each zone carries its own type, and the level's stream encodes changes via `0xF6` opcodes. The C++ reference tool exposes this editability via `CNesEditor::ChangeGround(itemIndex, bSet, bType)` ([cneseditor_editor.cpp:335](../../smb2/smb2/cpp/NES/Level Editor/cneseditor_editor.cpp#L335)), and its serializer emits a `groundType` opcode whenever a zone's type differs from the carried-forward value ([cneseditor_objmaker.cpp:146-153](../../smb2/smb2/cpp/NES/Level Editor/cneseditor_objmaker.cpp#L146)).
+
+Consequence: modifying a zone's `groundType` is safe and produces a vanilla-compatible ROM. Values must be masked to 3 bits (0–7). Values 6 and 7 often produce `tileId=0` in the per-world table (no rendered tile) but don't crash the engine — they just show a hole.
+
 ### `groundType` opcode retroactively rewrites the last groundSet's type
 
 When a `groundType` opcode (`0xF6`) is encountered in the stream, it does **two** things (ported from C++ `cneseditor_loader.cpp:96-101`, `ItemFromList(iLastBgSet)->ChangeBgType(uGroundType)`):

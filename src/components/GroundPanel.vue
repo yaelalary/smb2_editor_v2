@@ -17,6 +17,7 @@ import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
 import { computeGroundSegments } from '@/rom/ground-pass';
+import { physicsForZone, type GroundPhysics } from '@/rom/ground-physics';
 import { getBgSet, getBgTile, getWorldGfx } from '@/rom/tile-reader';
 import { levelDimensions } from '@/rom/level-layout';
 import { readLevelPalette } from '@/rom/palette-reader';
@@ -25,6 +26,7 @@ import type { LevelBlock, LevelItem } from '@/rom/model';
 import { SetLevelFieldCommand } from '@/commands/property-commands';
 import {
   SetGroundSetCommand,
+  SetGroundTypeCommand,
   MoveGroundSegmentCommand,
   InsertGroundSegmentCommand,
   DeleteGroundSegmentCommand,
@@ -228,9 +230,12 @@ function splitSelectedZone(): void {
   const anchorItem = idx === 0 ? null : (streamZones.value[idx - 1] ?? null);
   const newStart = start + Math.max(1, Math.floor(room / 2));
   const inheritedShape = selectedZoneShape.value;
+  const inheritedType = groundTypeFor(idx);
 
   history.execute(
-    new InsertGroundSegmentCommand(b, anchorItem, newStart, inheritedShape, rom.activeSlot),
+    new InsertGroundSegmentCommand(
+      b, anchorItem, newStart, inheritedShape, inheritedType, rom.activeSlot,
+    ),
   );
   // Select the freshly-inserted zone so the user can change its shape.
   nextTick(() => {
@@ -341,6 +346,44 @@ function drawShape(el: unknown, shape: number, groundType: number, cellPx = 3): 
 }
 
 /**
+ * Runtime physics the SELECTED zone would have if its `groundType` were
+ * set to `gt`. Used to build the groundType dropdown's option labels so
+ * the user sees "0 · solid", "1 · quicksand", etc. based on the current
+ * (world, objectType, shape) context.
+ */
+function physicsForGroundType(gt: number): GroundPhysics {
+  void history.revision;
+  const b = block.value;
+  const romData = rom.romData;
+  if (!b || !romData) return 'solid';
+  const world = Math.floor(rom.activeSlot / 30);
+  const isH = (b as { header: { direction: number } }).header.direction === 1;
+  const objectType = (b as { header: { objectType: number } }).header.objectType;
+  return physicsForZone(romData.rom, world, objectType, selectedZoneShape.value, gt, isH);
+}
+
+function groundTypeOptionLabel(gt: number): string {
+  const p = physicsForGroundType(gt);
+  return p === 'solid' ? `${gt} · solid` : `${gt} · ${p}`;
+}
+
+function onGroundTypeChange(raw: string): void {
+  const b = block.value;
+  const s = selected.value;
+  if (!b || s === null) return;
+  const n = Number.parseInt(raw, 10);
+  if (Number.isNaN(n)) return;
+  const clamped = Math.max(0, Math.min(7, n));
+  if (s === 'header') {
+    if (b.header.groundType === clamped) return;
+    history.execute(new SetLevelFieldCommand(b.header, 'groundType', clamped, rom.activeSlot));
+  } else {
+    const item = s as LevelItem;
+    history.execute(new SetGroundTypeCommand(b, item, clamped, rom.activeSlot));
+  }
+}
+
+/**
  * Grouped shape picker — collects the 32 presets under intent
  * headings. Any index not mapped here lands under "Others" (32-item
  * coverage guarantee).
@@ -352,6 +395,24 @@ const SHAPE_GROUPS: ReadonlyArray<{ label: string; ids: ReadonlyArray<number> }>
   { label: 'Colonnes & piliers', ids: [10, 11, 12, 13] },
   { label: 'Motifs mixtes',     ids: [9, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] },
 ];
+
+/**
+ * Runtime physics of the zone at display index `idx` (0 = header).
+ * In SMB2, physics comes from the zone's `groundType` (not from the
+ * shape), so this is a per-ZONE attribute, not per-shape. Used to
+ * badge each zone in the list below with its runtime behavior.
+ */
+function zonePhysics(idx: number): GroundPhysics {
+  void history.revision; // see streamZones — shallowRef reactivity
+  const b = block.value;
+  const romData = rom.romData;
+  const seg = zones.value[idx];
+  if (!b || !romData || !seg) return 'solid';
+  const world = Math.floor(rom.activeSlot / 30);
+  const isH = (b as { header: { direction: number } }).header.direction === 1;
+  const objectType = (b as { header: { objectType: number } }).header.objectType;
+  return physicsForZone(romData.rom, world, objectType, seg.groundSet, seg.groundType, isH);
+}
 </script>
 
 <template>
@@ -389,12 +450,20 @@ const SHAPE_GROUPS: ReadonlyArray<{ label: string; ids: ReadonlyArray<number> }>
             class="shrink-0 rounded-sm border border-black/30"
           />
           <div class="flex-1 min-w-0">
-            <div class="text-xs font-semibold text-ink">
-              Zone {{ idx + 1 }}
+            <div class="text-xs font-semibold text-ink flex items-center gap-1.5">
+              <span>Zone {{ idx + 1 }}</span>
               <span
                 v-if="idx === 0"
-                class="text-[9px] text-ink-muted font-normal ml-1"
+                class="text-[9px] text-ink-muted font-normal"
               >(start)</span>
+              <span
+                v-if="zonePhysics(idx) !== 'solid'"
+                class="text-[9px] font-bold leading-none px-1 py-px rounded-sm text-black"
+                :class="zonePhysics(idx) === 'diggable' ? 'bg-amber-500' : 'bg-cyan-500'"
+                :title="`Runtime physics: ${zonePhysics(idx)}`"
+              >
+                {{ zonePhysics(idx) === 'diggable' ? 'DIG' : 'QS' }}
+              </span>
             </div>
             <div class="text-[10px] text-ink-muted">
               tile {{ zoneStart(idx) }} → {{ zoneEnd(idx) }} · {{ zoneLength(idx) }} tiles
@@ -522,6 +591,26 @@ const SHAPE_GROUPS: ReadonlyArray<{ label: string; ids: ReadonlyArray<number> }>
         <div class="text-[10px] text-ink-muted/80 italic">
           Editing the end actually moves the next zone's start — zones
           are always adjacent (no gaps, no overlaps).
+        </div>
+
+        <!-- Ground type — controls physics (quicksand, diggable, …) -->
+        <div class="flex items-center gap-1 pt-1">
+          <span class="text-[10px] text-ink-muted w-12 shrink-0">Type</span>
+          <select
+            :value="groundTypeFor(selectedZoneIdx)"
+            class="flex-1 px-2 py-1 rounded bg-panel border border-panel-border
+                   text-xs font-mono focus:outline-none focus:border-accent"
+            :title="'Runtime ground type — changes physics and the rendered tile. See the ground-physics registry.'"
+            @change="(e) => onGroundTypeChange((e.target as HTMLSelectElement).value)"
+          >
+            <option
+              v-for="gt in 8"
+              :key="gt - 1"
+              :value="gt - 1"
+            >
+              {{ groundTypeOptionLabel(gt - 1) }}
+            </option>
+          </select>
         </div>
       </div>
 

@@ -21,6 +21,7 @@ import {
   MoveGroundSegmentCommand,
   DeleteGroundSegmentCommand,
   SetGroundSetCommand,
+  SetGroundTypeCommand,
 } from '@/commands/ground-commands';
 import type { LevelBlock, LevelHeader } from '@/rom/model';
 import { LEVEL_HEADER_BYTES } from '@/rom/constants';
@@ -153,7 +154,7 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     }));
 
     // Split the header zone at position 10.
-    const cmd = new InsertGroundSegmentCommand(block, null, 10, 5);
+    const cmd = new InsertGroundSegmentCommand(block, null, 10, 5, 0);
     cmd.execute();
 
     const expectedZones = computeGroundSegments(block).map((z) => z.startPos);
@@ -180,7 +181,7 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     // If slot 0 doesn't have one, insert one first for test setup.
     const segs = computeGroundSegments(block);
     if (segs.length < 2) {
-      new InsertGroundSegmentCommand(block, null, 8, 5).execute();
+      new InsertGroundSegmentCommand(block, null, 8, 5, 0).execute();
     }
 
     // Find the first stream zone.
@@ -190,7 +191,7 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     const afterPos = (firstStreamZone.absoluteStartPos ?? 0) + 3;
 
     // Split by inserting after it at afterPos.
-    new InsertGroundSegmentCommand(block, firstStreamZone, afterPos, 7).execute();
+    new InsertGroundSegmentCommand(block, firstStreamZone, afterPos, 7, 0).execute();
 
     const expectedZones = computeGroundSegments(block).map((z) => z.startPos);
 
@@ -208,7 +209,7 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     // Ensure at least one stream zone exists.
     const segs0 = computeGroundSegments(block);
     if (segs0.length < 2) {
-      new InsertGroundSegmentCommand(block, null, 12, 5).execute();
+      new InsertGroundSegmentCommand(block, null, 12, 5, 0).execute();
     }
 
     const streamZones = block.items.filter((it) => it.kind === 'groundSet');
@@ -232,12 +233,13 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     const block = getBlockForSlot(rom, 0);
 
     // Insert two zones so we have something to delete.
-    new InsertGroundSegmentCommand(block, null, 6, 3).execute();
+    new InsertGroundSegmentCommand(block, null, 6, 3, 0).execute();
     new InsertGroundSegmentCommand(
       block,
       block.items.find((it) => it.kind === 'groundSet') ?? null,
       12,
       4,
+      0,
     ).execute();
 
     const zonesBefore = computeGroundSegments(block).length;
@@ -261,11 +263,11 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     const block = getBlockForSlot(rom, 0);
 
     // Split at 8, 4, 12, 2 — creates a fragmented zone layout.
-    new InsertGroundSegmentCommand(block, null, 8, 3).execute();
+    new InsertGroundSegmentCommand(block, null, 8, 3, 0).execute();
     const gs8 = block.items.filter((it) => it.kind === 'groundSet')[0]!;
-    new InsertGroundSegmentCommand(block, null, 4, 5).execute();
-    new InsertGroundSegmentCommand(block, gs8, 12, 7).execute();
-    new InsertGroundSegmentCommand(block, null, 2, 2).execute();
+    new InsertGroundSegmentCommand(block, null, 4, 5, 0).execute();
+    new InsertGroundSegmentCommand(block, gs8, 12, 7, 0).execute();
+    new InsertGroundSegmentCommand(block, null, 2, 2, 0).execute();
 
     const expectedZones = computeGroundSegments(block).map((z) => ({
       startPos: z.startPos,
@@ -283,11 +285,139 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
     );
   });
 
+  it('insert preserves the groundType of surrounding zones', () => {
+    // 6-1·1 has zones with distinct groundTypes via groundType-opcode
+    // pairs (zone 2=1, zone 3=0, etc.). Inserting a new zone between
+    // zone 2 and zone 3 must NOT hijack the chain — both should keep
+    // their original types, and the new zone gets its own pinned type.
+    const rom = loadRom();
+    const block = getBlockForSlot(rom, 5 * 30 + 0); // slot 150 = 6-1·1
+    const before = computeGroundSegments(block).map((z) => ({
+      startPos: z.startPos,
+      groundType: z.groundType,
+    }));
+    expect(before.length).toBeGreaterThanOrEqual(3);
+
+    // Anchor = zone 2's stream item; insert a new zone between its
+    // pinning groundType opcode and zone 3.
+    const streamZones = block.items.filter((it) => it.kind === 'groundSet');
+    const zone2Item = streamZones[0]!;
+    const zone2Start = zone2Item.absoluteStartPos ?? 0;
+    const zone3Start = streamZones[1]?.absoluteStartPos ?? zone2Start + 5;
+    const newStart = zone2Start + Math.max(1, Math.floor((zone3Start - zone2Start) / 2));
+
+    // Pick a new type that differs from both neighbors so we can tell
+    // if the chain got hijacked.
+    const newType = 2;
+    new InsertGroundSegmentCommand(block, zone2Item, newStart, 13, newType).execute();
+
+    const after = computeGroundSegments(block);
+    // Zone 2's type is unchanged (was 1).
+    expect(after[1]!.groundType).toBe(before[1]!.groundType);
+    // The new zone (now at display index 2) has the inherited type.
+    expect(after[2]!.startPos).toBe(newStart);
+    expect(after[2]!.groundType).toBe(newType);
+    // Subsequent zones unchanged — zone 3 (now at index 3) keeps its type.
+    for (let i = 2; i < before.length; i++) {
+      const orig = before[i]!;
+      const shifted = after[i + 1];
+      expect(shifted, `zone ${i} shifted`).toBeDefined();
+      expect(shifted!.startPos).toBe(orig.startPos);
+      expect(shifted!.groundType).toBe(orig.groundType);
+    }
+  });
+
+  it('delete preserves the groundType of the zone before it', () => {
+    // Deleting zone N must not cause zone N-1 to inherit zone N's type
+    // via a now-orphan groundType opcode.
+    const rom = loadRom();
+    const block = getBlockForSlot(rom, 5 * 30 + 0); // 6-1·1
+    const before = computeGroundSegments(block).map((z) => z.groundType);
+    expect(before.length).toBeGreaterThanOrEqual(3);
+
+    const streamZones = block.items.filter((it) => it.kind === 'groundSet');
+    // Delete zone 3 (second stream zone).
+    const victim = streamZones[1]!;
+    new DeleteGroundSegmentCommand(block, victim).execute();
+
+    const after = computeGroundSegments(block).map((z) => z.groundType);
+    // Zone 2's type should still be what it was before the delete (not
+    // hijacked by zone 3's pinning opcode).
+    expect(after[0]).toBe(before[0]); // header
+    expect(after[1]).toBe(before[1]); // zone 2
+    // Zone 3 is gone; remaining zones shift up but keep their types.
+    for (let i = 3; i < before.length; i++) {
+      expect(after[i - 1]).toBe(before[i]);
+    }
+  });
+
+  it('setGroundType modifies the zone\'s companion groundType opcode', () => {
+    const rom = loadRom();
+    const block = getBlockForSlot(rom, 5 * 30 + 0); // 6-1·1 — has paired groundSet+groundType zones
+    const streamZones = block.items.filter((it) => it.kind === 'groundSet');
+    expect(streamZones.length).toBeGreaterThan(0);
+    const target = streamZones[0]!; // zone 2 in the UI
+    const beforeSegs = computeGroundSegments(block);
+    const originalType = beforeSegs[1]!.groundType;
+
+    // Pick a new type that differs.
+    const newType = (originalType + 1) % 8;
+    const cmd = new SetGroundTypeCommand(block, target, newType);
+    cmd.execute();
+
+    const afterSegs = computeGroundSegments(block);
+    expect(afterSegs[1]!.groundType).toBe(newType);
+    // Other zones unaffected.
+    expect(afterSegs[0]!.groundType).toBe(beforeSegs[0]!.groundType);
+    for (let i = 2; i < beforeSegs.length; i++) {
+      expect(afterSegs[i]!.groundType).toBe(beforeSegs[i]!.groundType);
+    }
+
+    // Undo restores.
+    cmd.undo();
+    const undoneSegs = computeGroundSegments(block);
+    expect(undoneSegs[1]!.groundType).toBe(originalType);
+  });
+
+  it('setGroundType inserts a groundType opcode if the zone has none', () => {
+    // Construct a block with a groundSet that has NO companion — simulates
+    // a zone the user inserted before we started pairing them, or a
+    // minimal hand-crafted level.
+    const rom = loadRom();
+    const block = getBlockForSlot(rom, 0);
+    const zone = {
+      kind: 'groundSet' as const,
+      sourceBytes: new Uint8Array([0xf0, 5]),
+      sourceRange: [0, 0] as [number, number],
+      tileX: -1,
+      tileY: -1,
+      itemId: -1,
+      absoluteStartPos: 10,
+    };
+    (block.items as unknown as typeof zone[]).push(zone);
+    const beforeLen = block.byteLength;
+
+    const cmd = new SetGroundTypeCommand(block, zone, 2);
+    cmd.execute();
+    // byteLength grew by 2 (new companion) and next item is the new
+    // groundType opcode.
+    expect(block.byteLength).toBe(beforeLen + 2);
+    const zoneIdx = block.items.indexOf(zone);
+    const companion = block.items[zoneIdx + 1];
+    expect(companion?.kind).toBe('groundType');
+    expect(companion?.sourceBytes[0]).toBe(0xf6);
+    expect(companion?.sourceBytes[1]).toBe(2);
+
+    cmd.undo();
+    expect(block.byteLength).toBe(beforeLen);
+    expect(block.items[zoneIdx + 1]).not.toBe(companion);
+  });
+
   it('setGroundSet round-trips the new shape', () => {
     const rom = loadRom();
     const block = getBlockForSlot(rom, 0);
 
-    new InsertGroundSegmentCommand(block, null, 10, 3).execute();
+    new InsertGroundSegmentCommand(block, null, 10, 3, 0).execute();
     const zone = block.items.filter((it) => it.kind === 'groundSet')[0]!;
     new SetGroundSetCommand(block, zone, 17).execute();
 
@@ -338,6 +468,7 @@ describe.skipIf(!hasFixture)('Ground commands — round-trip', () => {
             anchor,
             newStart,
             segs[zoneIdx]!.groundSet,
+            segs[zoneIdx]!.groundType,
           ).execute();
         } catch {
           continue;

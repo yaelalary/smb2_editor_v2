@@ -183,6 +183,20 @@ If multiple sub-space mushrooms with the **same ID** appear in a single room, on
 
 ## Boss rooms
 
+### Big mouth entrance (item `30` / `0x1E`) — single vanilla instance
+
+The "Big mouth entrance used in desert" is an `nliEntrance` item (4- or 5-byte form with destination pointer) rendered in-game as a **2×4 tile** Sphinx-style carved face that opens its mouth when Mario approaches. The multi-tile visual (mouth + eyes + face) is composed at runtime by the 6502 ASM, not encoded in the level data.
+
+In the editor we render it as a single-tile sentinel (`0xFC` — pink "12?" placeholder) at [item-renderer.ts:218](src/rom/item-renderer.ts#L218) because we don't replicate the runtime composition. So the library thumbnail and the canvas show a 1×1 pink square where the actual in-game sprite will be 2×4.
+
+Vanilla coverage: exactly **one instance in the entire ROM**, in slot 171 (6-3·2) at tile (73, 1). Its destination is the white-entrance companion below.
+
+### White entrance (item `21` / `0x15`) — same 2×4 runtime composition
+
+Like the big mouth, the "White entrance, extends to ground" is an `nliEntrance` that renders as a **2×4 tile** door in-game (composed from multiple CHR tiles by the 6502 at runtime) but as a single-tile sentinel `0xFC` in the editor ([item-renderer.ts:249-251](src/rom/item-renderer.ts#L249-L251)).
+
+It's used as the **return / paired door** for other non-standard entrances. Example from vanilla: the big mouth in 6-3·2 (`bytes=[0x19, 0x1E, 0xF5, 0x11, 0x20]` → far-pointer to 6-3·3 page 0) is paired with a white entrance in 6-3·3 at tile (5, 6) (`bytes=[0x65, 0x15, 0x06, 0x13]`). Mario enters via the big mouth and emerges through the white entrance, 2×4 on both ends.
+
 ### Boss exit door is hardcoded in ASM
 
 In every boss room (Mouser, Triclyde, Fryguy, Clawgrip, Wart, Birdo mini-bosses), a White entrance sprite appears after the boss is defeated so Mario can exit. **This door is not stored in the level's item stream** — its position is hardcoded in the 6502 ASM that runs on boss defeat. The C++ reference tool does not surface it either.

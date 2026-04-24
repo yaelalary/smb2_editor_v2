@@ -173,6 +173,19 @@ function drawTile(el: unknown, libraryId: number): void {
     };
     put(0, 0, d.topleft);
     put(0, 1, d.middle);
+  } else if (libraryId === 31) {
+    // Large red platform background (rawId 0x1F) — at runtime the ROM
+    // routine writes 12-tile rows extending downward until non-sky. That
+    // overflows the 4×4 preview, so we sample the body only: two columns
+    // (MidLeft, MidRight) repeated for two rows. Putting Left+Right side
+    // by side would break the diagonal pattern visually because both are
+    // edge tiles; the in-game pattern is Left, [MidLeft, MidRight] × 5,
+    // Right — the two edges are never adjacent. BG-atlas, type=4.
+    const put = (x: number, y: number, tileId: number) => {
+      grid.setItem(x, y, { tileId, type: 4, regularId: 31, groundType: 0 });
+    };
+    put(0, 0, 0x5d); put(1, 0, 0x5f);
+    put(0, 1, 0x5d); put(1, 1, 0x5f);
   } else {
     renderItem(grid, previewItem, romData.rom, slot, header as never);
   }

@@ -22,6 +22,7 @@ import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS, VINE_LADDER_ITEM_IDS } from '@/rom/constants';
 import { buildOrphanIndex, isRoutingItem, pointerDestination, tilePageOf } from '@/commands/routing-commands';
+import { findRedBgOverwrites } from '@/rom/red-bg-overwrites';
 import { bossExitDoorForSlot } from '@/rom/boss-exit-doors';
 import type { LevelMap } from '@/rom/model';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
@@ -137,6 +138,19 @@ const orphanSet = computed<Set<LevelItem>>(() => {
   // us the underlying mutable LevelMap so the items we put in the Set
   // match the raw identity canvas iteration uses (via `activeBlock`).
   return buildOrphanIndex(toRaw(map) as LevelMap).orphans;
+});
+
+/**
+ * Items in the active block that the Large Red Platform Background
+ * (item `0x1F`) will overwrite at runtime. Surfaces what the ROM does
+ * silently: items earlier in the stream that fall under a red-bg
+ * footprint get clobbered when the game writes nametable RAM.
+ */
+const redBgOverwriteSet = computed<Set<LevelItem>>(() => {
+  void history.revision;
+  const b = block.value;
+  if (!b) return new Set();
+  return findRedBgOverwrites(toRaw(b) as LevelBlock);
 });
 
 // ─── Coordinate helpers ─────────────────────────────────────────────
@@ -990,29 +1004,42 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     // user spots the broken pair before exporting (the export gate
     // in App.vue also refuses to download when any orphan exists).
     const orphans = orphanSet.value;
+    const drawWarningChip = (x: number, y: number) => {
+      ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
+      ctx.lineWidth = 1.25;
+      ctx.strokeRect(x + 0.5, y + 0.5, TILE_PX - 1, TILE_PX - 1);
+      const chipW = 7;
+      const chipH = 7;
+      const cx = x + TILE_PX - chipW - 1;
+      const cy = y + 1;
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.95)';
+      ctx.fillRect(cx, cy, chipW, chipH);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 6px monospace';
+      ctx.textBaseline = 'top';
+      ctx.fillText('!', cx + 2, cy + 1);
+    };
     if (orphans.size > 0) {
       for (const item of b.items) {
         if (!isRoutingItem(item)) continue;
         if (item.tileX < 0 || item.tileY < 0) continue;
         if (!orphans.has(item)) continue;
-        const x = item.tileX * TILE_PX;
-        const y = item.tileY * TILE_PX;
-        // Red outline around the whole tile.
-        ctx.strokeStyle = 'rgba(248, 113, 113, 0.95)';
-        ctx.lineWidth = 1.25;
-        ctx.strokeRect(x + 0.5, y + 0.5, TILE_PX - 1, TILE_PX - 1);
-        // Small "⚠" chip in the top-right corner so the glyph is
-        // unmistakable even when the outline overlaps a similar color.
-        const chipW = 7;
-        const chipH = 7;
-        const cx = x + TILE_PX - chipW - 1;
-        const cy = y + 1;
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.95)';
-        ctx.fillRect(cx, cy, chipW, chipH);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 6px monospace';
-        ctx.textBaseline = 'top';
-        ctx.fillText('!', cx + 2, cy + 1);
+        drawWarningChip(item.tileX * TILE_PX, item.tileY * TILE_PX);
+      }
+    }
+
+    // ── Red-bg overwrite warning ──────────────────────────────────
+    // Items emitted earlier in the stream than a Large Red Platform
+    // Background (item 0x1F) get clobbered in nametable RAM at runtime
+    // because the red-bg routine writes its 12-tile rows unconditionally.
+    // Flag them with the same red chip so the user sees what will
+    // disappear in-game before exporting.
+    const redBgVictims = redBgOverwriteSet.value;
+    if (redBgVictims.size > 0) {
+      for (const item of b.items) {
+        if (!redBgVictims.has(item)) continue;
+        if (item.tileX < 0 || item.tileY < 0) continue;
+        drawWarningChip(item.tileX * TILE_PX, item.tileY * TILE_PX);
       }
     }
 

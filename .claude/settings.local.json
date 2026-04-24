@@ -54,7 +54,9 @@
       "Bash(grep -E \"\\\\.\\(h|cpp\\)$\")",
       "Bash(grep -E \"\\\\.h$\")",
       "Read(//c/Users/Yael/Documents/.claude/plans/**)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(gh api *)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['path']\\) for e in d['tree'] if 'object' in e['path'].lower\\(\\) or 'level' in e['path'].lower\\(\\) or 'platform' in e['path'].lower\\(\\)][:60]\")"
     ],
     "additionalDirectories": [
       "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2\\.claude\\skills",

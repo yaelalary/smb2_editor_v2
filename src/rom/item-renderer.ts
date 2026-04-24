@@ -216,7 +216,71 @@ function renderSpecialRegular(
     }
     case 23: emit(grid, 0xfb, posX, posY, regularId, 0); break; // pyramid sentinel
     case 30: emit(grid, 0xfc, posX, posY, regularId, 0); break; // desert-entrance sentinel
-    case 31: emit(grid, 0xfd, posX, posY, regularId, 0); break; // red-bg sentinel
+    case 31: renderLargeRedPlatformBg(grid, posX, posY, regularId); break;
+  }
+}
+
+/**
+ * Item 0x1F — "Large red platform background, extends to ground".
+ *
+ * Faithful port of the ROM routine `CreateObject_TreeBackground` in
+ * Xkeeper0/smb2 src/prg-6-7.asm (dispatch via `CreateObjects_10` $1F).
+ * Width is hardcoded to 12 tiles per row:
+ *   `Left, [MidLeft, MidRight] × 5, Right`
+ * Height is dynamic — the routine re-checks the leftmost cell of each
+ * next row against `BackgroundTile_Sky` (0x40) and exits as soon as it
+ * finds anything else. In our editor, ground cells are visible BG-atlas
+ * cells with non-sky tile IDs, and unfilled sky regions are simply not
+ * visible — both branches of "blocked" mirror the runtime check.
+ *
+ * Note: the very first row also gates on the placement cell being sky.
+ * Placing this item on top of ground or another object renders nothing,
+ * which is exactly what happens in-game.
+ *
+ * Tile IDs come from `defs.asm` in the disassembly:
+ *   Left=0x5C, MidLeft=0x5D, MidRight=0x5F, Right=0x5E, Sky=0x40.
+ *
+ * The visible result depends on the world's CHR bank — vanilla SMB2 only
+ * uses this item in W5-3 where it renders as red platforms, but the
+ * routine itself is world-agnostic.
+ */
+function renderLargeRedPlatformBg(
+  grid: CanvasGrid,
+  posX: number, posY: number, regularId: number,
+): void {
+  const TILE_LEFT = 0x5c;
+  const TILE_MID_LEFT = 0x5d;
+  const TILE_MID_RIGHT = 0x5f;
+  const TILE_RIGHT = 0x5e;
+  const SKY = 0x40;
+
+  const isBlocked = (x: number, y: number): boolean => {
+    const cell = grid.getItem(x, y);
+    if (!cell.visible) return false;
+    return !(cell.type !== 0 && cell.tileId === SKY);
+  };
+
+  // Use forceSetItem (bypass priority) instead of the regular `emit` helper:
+  // in-game this is just sequential nametable RAM writes, so anything in the
+  // 12×N footprint that was placed earlier in the stream gets unconditionally
+  // overwritten by the red-bg pattern. The C++ tool's priority list has us
+  // tagged as background (priority 3), which would otherwise reject overwrites
+  // of front-priority items (clouds, herbs) and leave them visible — but the
+  // ROM does no such check. Items processed AFTER the red bg in stream order
+  // still go through the normal `setItem` and correctly land on top, since
+  // they'll have lower priority numbers than 3.
+  const put = (x: number, y: number, tileId: number) => {
+    grid.forceSetItem(x, y, { tileId, type: 4, regularId, groundType: 0 });
+  };
+
+  for (let y = posY; y < grid.height; y++) {
+    if (isBlocked(posX, y)) return;
+    put(posX, y, TILE_LEFT);
+    for (let i = 0; i < 5; i++) {
+      put(posX + 1 + i * 2, y, TILE_MID_LEFT);
+      put(posX + 2 + i * 2, y, TILE_MID_RIGHT);
+    }
+    put(posX + 11, y, TILE_RIGHT);
   }
 }
 

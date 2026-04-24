@@ -203,6 +203,24 @@ In every boss room (Mouser, Triclyde, Fryguy, Clawgrip, Wart, Birdo mini-bosses)
 
 The editor keeps a manual registry in [boss-exit-doors.ts](src/rom/boss-exit-doors.ts) and renders a semi-transparent read-only ghost at the recorded position. Known positions (tile coords): Mouser 1-3·5 (24,11), Triclyde 2-3·7 (24,11), Mouser 3-3·9 (24,11), Fryguy 4-3·8 (8,11), Clawgrip 5-3·6 (24,7), Triclyde 6-3·7 (24,11), Wart 7-2·6 (40,11).
 
+## Background objects (runtime-composed)
+
+### Large red platform background (item `31` / `0x1F`)
+
+Dispatched via the SMB2 ROM's `CreateObjects_10` jump table to a handler the disassembly labels `CreateObject_TreeBackground` (legacy Doki Doki Panic name; the same binary handler renders as red platforms in W5-3 because of the loaded CHR/palette). Source: `Xkeeper0/smb2 src/prg-6-7.asm`.
+
+Geometry generated at runtime:
+
+- **Width is hardcoded at exactly 12 tiles per row.** Row layout: `Left` + 5 × (`MiddleLeft`, `MiddleRight`) + `Right`, using the four `BackgroundTile_TreeBackground{Left,MiddleLeft,MiddleRight,Right}` nametable indices. The outer X loop with `LDX #$02` handles Left/Right ends; the inner `MiddleLoop` with counter `byte_RAM_7 = #$04` runs 5 iterations × 2 tiles.
+- **Height is dynamic — extends down until non-sky.** After each row, the routine increments Y, jumps back to the entry, and re-reads the tile at the new `(x,y)`. If it equals `BackgroundTile_Sky`, draw another row; if it's anything else (ground, wall, another object), `RTS`.
+- **Implicit guard**: the very first instruction reads the tile at the placement cell and exits immediately if it's not sky. Placing this object on a non-sky cell renders nothing.
+
+Item encoding: standard 2-byte regular item — no length field. The runtime extent is computed entirely from neighboring tile state.
+
+Vanilla coverage (via `scripts/find-item.ts 31`): only used in W5-3 sub-sections 2, 3, 5 (slots 141, 142, 144) — 8 placements total, all at `y=0`, `dir=1`, `fx=3`. Designer X-spacing of 24 tiles between adjacent placements is 12 tiles of pattern + 12 tiles of gap, not a property of the object.
+
+Editor representation: [item-renderer.ts:219](src/rom/item-renderer.ts#L219) emits sentinel `0xFD` at the placement cell — same as the C++ reference tool's `DrawRedBg` (`clvldraw_worker.cpp:589`), which punts because reproducing "extends until non-sky" requires simulating the surrounding level state. With the editor's existing ground/items grid, a faithful renderer could write 12 tiles per row from `(posX, posY)` downward and stop on the first row where any cell in `[posX..posX+11]` is non-empty.
+
 ## Rendering quirks (editor)
 
 ### Sentinel metatiles display as "NN?"

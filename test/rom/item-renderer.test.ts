@@ -210,12 +210,59 @@ describe('renderItem — sentinel items', () => {
     expect(grid.getItem(2, 2).type).toBe(0);
   });
 
-  it('red bg (rawId 31) writes tileId 0xFD with type=0', () => {
+  it('red bg (rawId 31) draws 12-tile-wide rows extending downward', () => {
     const rom = makeSyntheticRom();
     const grid = new CanvasGrid(16, 15, 3, 1, true);
     renderItem(grid, regularItem(31, 3, 3), rom, 0, testHeader());
-    expect(grid.getItem(3, 3).tileId).toBe(0xfd);
-    expect(grid.getItem(3, 3).type).toBe(0);
+    // Row pattern: Left, [MidLeft, MidRight] × 5, Right (BG-atlas, type=4).
+    const expectedRow = [0x5c, 0x5d, 0x5f, 0x5d, 0x5f, 0x5d, 0x5f, 0x5d, 0x5f, 0x5d, 0x5f, 0x5e];
+    for (let dx = 0; dx < 12; dx++) {
+      const cell = grid.getItem(3 + dx, 3);
+      expect(cell.tileId).toBe(expectedRow[dx]);
+      expect(cell.type).toBe(4);
+      expect(cell.visible).toBe(true);
+    }
+    // No blocking cells below → fills all the way to grid bottom.
+    expect(grid.getItem(3, 14).tileId).toBe(0x5c);
+    expect(grid.getItem(14, 14).tileId).toBe(0x5e);
+  });
+
+  it('red bg (rawId 31) stops at first blocked row below', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(16, 15, 3, 1, true);
+    // Plant a blocker (BG-atlas, non-sky) at the leftmost column on row 6.
+    grid.setItem(3, 6, { tileId: 0x99, type: 4, regularId: 0, groundType: 0 });
+    renderItem(grid, regularItem(31, 3, 3), rom, 0, testHeader());
+    // Rows 3, 4, 5 should be drawn; row 6 was already blocked, so the
+    // red-bg routine exits before overwriting it.
+    expect(grid.getItem(3, 5).tileId).toBe(0x5c);
+    expect(grid.getItem(3, 6).tileId).toBe(0x99);
+    expect(grid.getItem(3, 7).visible).toBe(false);
+  });
+
+  it('red bg (rawId 31) draws nothing when placement cell is blocked', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(16, 15, 3, 1, true);
+    grid.setItem(3, 3, { tileId: 0x99, type: 4, regularId: 0, groundType: 0 });
+    renderItem(grid, regularItem(31, 3, 3), rom, 0, testHeader());
+    // The pre-existing tile is preserved; nothing else gets drawn.
+    expect(grid.getItem(3, 3).tileId).toBe(0x99);
+    expect(grid.getItem(4, 3).visible).toBe(false);
+    expect(grid.getItem(3, 4).visible).toBe(false);
+  });
+
+  it('red bg (rawId 31) force-overwrites pre-existing items in its footprint', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(16, 15, 3, 1, true);
+    // Earlier-stream cloud at (8, 5): regularId=16, priority 1 (more in front).
+    // Without force-overwrite, the priority check would reject the red bg here.
+    grid.setItem(8, 5, { tileId: 0x42, type: 4, regularId: 16, groundType: 0 });
+    renderItem(grid, regularItem(31, 3, 3), rom, 0, testHeader());
+    // Column 8 falls inside [3..14] → row 5 of the red bg overwrites the cloud.
+    // (Position 8 = posX+5, which is the MidLeft tile in the row pattern:
+    //  Left at +0, then MidLeft/MidRight pairs at +1/+2, +3/+4, +5/+6, ...)
+    expect(grid.getItem(8, 5).tileId).toBe(0x5d);
+    expect(grid.getItem(8, 5).regularId).toBe(31);
   });
 });
 

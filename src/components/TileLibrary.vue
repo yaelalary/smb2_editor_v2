@@ -18,7 +18,7 @@ import { ITEM_NAMES, ITEM_DIM, getItemDimTiles } from '@/rom/nesleveldef';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { getFxForSlot } from '@/rom/level-layout';
-import { getWorldGfx } from '@/rom/tile-reader';
+import { getWorldGfx, getMasvDim, getVertDim } from '@/rom/tile-reader';
 import { readLevelPalette } from '@/rom/palette-reader';
 import { CanvasGrid } from '@/rom/canvas-grid';
 import { renderItem } from '@/rom/item-renderer';
@@ -120,17 +120,62 @@ function drawTile(el: unknown, libraryId: number): void {
   // thumbnail blank. Anchor at tileX=2 so the 3-tile-wide sprite lands
   // at x=0,1,2 and renders fully.
   const anchorX = libraryId === 20 ? 2 : 0;
+  // For variable-size items that default to 1 tile but look nicer in the
+  // library as a recognizable strip, override the size low-nibble. These
+  // flow through `renderHorizontal` (vid 10, 11) which reads size from
+  // the rawId low nibble — just pre-encode the width we want.
+  const PREVIEW_HORZ_SIZE: Partial<Record<number, number>> = {
+    58: 1, // Red wood platform → 2×1
+    59: 1, // Cloud platform → 2×1
+  };
+  const sizeBits = PREVIEW_HORZ_SIZE[libraryId];
+  const itemByte =
+    sizeBits !== undefined ? (itemId & 0xf0) | (sizeBits & 0x0f) : itemId;
   const previewItem: LevelItem = {
     kind: ENTRANCE_ITEM_IDS.has(libraryId) ? 'entrance' : 'regular',
-    itemId,
+    itemId: itemByte,
     tileX: anchorX,
     tileY: 0,
-    sourceBytes: new Uint8Array([0, itemId & 0xff]),
+    sourceBytes: new Uint8Array([0, itemByte & 0xff]),
     sourceRange: [0, 0],
   } as LevelItem;
 
   const grid = new CanvasGrid(PREVIEW_GRID, PREVIEW_GRID, fx, gfx, isH);
-  renderItem(grid, previewItem, romData.rom, slot, header as never);
+  const EMPTY_DIM = {
+    topleft: 0xff, top: 0xff, topright: 0xff,
+    left: 0xff, right: 0xff, middle: 0xff,
+    bottomleft: 0xff, bottomright: 0xff,
+  };
+  if (libraryId === 57) {
+    // Green platform (vid 9) — `renderMassive` hardcodes sizeY=0x0e which
+    // overflows the 4×4 preview grid. Compose a compact 2×2 sample (cap
+    // row + 1 body row) directly from the ROM-resolved dim. `isMasvBg(9)`
+    // is true in-game, so the tiles live in the BG atlas (type=4) —
+    // using type=0 would look them up in the item atlas and render as black.
+    const d = getMasvDim(romData.rom, 9, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 57, groundType: 0 });
+    };
+    put(0, 0, d.topleft);
+    put(1, 0, d.topright);
+    put(0, 1, d.left);
+    put(1, 1, d.right);
+  } else if (libraryId === 15) {
+    // Red pillar (vid 15) — `renderVertical` sizes it to fill down to the
+    // next 0x0F-row boundary (~14 tall at posY=0), overflowing the 4×4
+    // preview. Show a compact 1×2 sample: top cap + one body row. Tiles
+    // are BG-atlas (isVertBg(0x0f) === true).
+    const d = getVertDim(romData.rom, 0x0f, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 15, groundType: 0 });
+    };
+    put(0, 0, d.topleft);
+    put(0, 1, d.middle);
+  } else {
+    renderItem(grid, previewItem, romData.rom, slot, header as never);
+  }
 
   // Crop to the bbox of visible cells so 1×1 items show compact, while
   // multi-tile items (doors, big clouds, hawkmouth) show their real shape.

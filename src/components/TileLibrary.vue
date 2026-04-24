@@ -114,10 +114,16 @@ function drawTile(el: unknown, libraryId: number): void {
   if (canvas.dataset['drawn'] === key) return;
 
   const itemId = libraryIdToRomByte(libraryId);
+  // Item 20 ("Entrance/exit light left") is right-anchored — its
+  // `renderEntrance` draws at posX-2, posX-1, posX. With tileX=0 those
+  // land at x=-2,-1,0 and fall outside the preview grid, leaving the
+  // thumbnail blank. Anchor at tileX=2 so the 3-tile-wide sprite lands
+  // at x=0,1,2 and renders fully.
+  const anchorX = libraryId === 20 ? 2 : 0;
   const previewItem: LevelItem = {
     kind: ENTRANCE_ITEM_IDS.has(libraryId) ? 'entrance' : 'regular',
     itemId,
-    tileX: 0,
+    tileX: anchorX,
     tileY: 0,
     sourceBytes: new Uint8Array([0, itemId & 0xff]),
     sourceRange: [0, 0],

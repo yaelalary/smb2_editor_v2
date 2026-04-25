@@ -194,12 +194,52 @@ describe('renderItem — horizontal items (GetHorzDim)', () => {
 // ─── Sentinel items (pyramid, star bg) ─────────────────────────────
 
 describe('renderItem — sentinel items', () => {
-  it('pyramid (rawId 23) writes tileId 0xFB with type=0 (item atlas)', () => {
+  it('pyramid (rawId 23) draws an expanding triangle with 4 distinct tiles', () => {
     const rom = makeSyntheticRom();
     const grid = new CanvasGrid(16, 15, 3, 1, true);
-    renderItem(grid, regularItem(23, 2, 2), rom, 0, testHeader());
-    expect(grid.getItem(2, 2).tileId).toBe(0xfb);
-    expect(grid.getItem(2, 2).type).toBe(0);
+    renderItem(grid, regularItem(23, 5, 0), rom, 0, testHeader());
+    // Row 0 (apex): LeftAngle, RightAngle at (5, 0) and (6, 0).
+    expect(grid.getItem(5, 0).tileId).toBe(0x84);
+    expect(grid.getItem(6, 0).tileId).toBe(0x87);
+    // Row 1: LeftAngle, LeftInner, RightInner, RightAngle, starting one
+    // column further left → cols 4..7.
+    expect(grid.getItem(4, 1).tileId).toBe(0x84);
+    expect(grid.getItem(5, 1).tileId).toBe(0x85);
+    expect(grid.getItem(6, 1).tileId).toBe(0x86);
+    expect(grid.getItem(7, 1).tileId).toBe(0x87);
+    // Row 2: cols 3..8 with 2 inner tiles on each side.
+    expect(grid.getItem(3, 2).tileId).toBe(0x84);
+    expect(grid.getItem(4, 2).tileId).toBe(0x85);
+    expect(grid.getItem(5, 2).tileId).toBe(0x85);
+    expect(grid.getItem(6, 2).tileId).toBe(0x86);
+    expect(grid.getItem(7, 2).tileId).toBe(0x86);
+    expect(grid.getItem(8, 2).tileId).toBe(0x87);
+    // BG-atlas (type=4) throughout.
+    expect(grid.getItem(5, 0).type).toBe(4);
+  });
+
+  it('pyramid (rawId 23) stops when leftmost cell of next row is blocked', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(16, 15, 3, 1, true);
+    // Block the leftmost column of row 2 (which would be x=3 if starting at 5,0).
+    grid.setItem(3, 2, { tileId: 0x99, type: 4, regularId: 0, groundType: 0 });
+    renderItem(grid, regularItem(23, 5, 0), rom, 0, testHeader());
+    // Rows 0 and 1 drawn.
+    expect(grid.getItem(5, 0).tileId).toBe(0x84);
+    expect(grid.getItem(4, 1).tileId).toBe(0x84);
+    // Row 2 not drawn — pre-existing blocker preserved.
+    expect(grid.getItem(3, 2).tileId).toBe(0x99);
+    expect(grid.getItem(8, 2).visible).toBe(false);
+  });
+
+  it('pyramid (rawId 23) draws nothing when placement cell is blocked', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(16, 15, 3, 1, true);
+    grid.setItem(5, 0, { tileId: 0x99, type: 4, regularId: 0, groundType: 0 });
+    renderItem(grid, regularItem(23, 5, 0), rom, 0, testHeader());
+    expect(grid.getItem(5, 0).tileId).toBe(0x99);
+    expect(grid.getItem(6, 0).visible).toBe(false);
+    expect(grid.getItem(4, 1).visible).toBe(false);
   });
 
   it('star bg (rawId 14) writes tileId 0xFE with type=0', () => {

@@ -214,9 +214,65 @@ function renderSpecialRegular(
       emit(grid, dim.topright, posX + 1, posY, regularId, 4);
       break;
     }
-    case 23: emit(grid, 0xfb, posX, posY, regularId, 0); break; // pyramid sentinel
+    case 23: renderPyramid(grid, posX, posY, regularId); break;
     case 30: emit(grid, 0xfc, posX, posY, regularId, 0); break; // desert-entrance sentinel
     case 31: renderLargeRedPlatformBg(grid, posX, posY, regularId); break;
+  }
+}
+
+/**
+ * Item 0x17 — "Pyramid".
+ *
+ * Faithful port of the ROM routine `CreateObject_Pyramid` in
+ * Xkeeper0/smb2 src/prg-6-7.asm (dispatch via `CreateObjects_10` $17).
+ * Symmetric triangle expanding downward:
+ *   Row 0: `[LeftAngle, RightAngle]` (2 tiles, the apex)
+ *   Row N: `[LeftAngle, N × LeftInner, N × RightInner, RightAngle]`
+ *          starting at column `posX − N` (so the pyramid grows on
+ *          both sides as it descends, 2N+2 tiles wide)
+ * Same sky-gated descent as the red bg: each row's leftmost cell must
+ * be sky for the routine to keep going.
+ *
+ * Tile IDs from src/defs.asm:
+ *   LeftAngle=0x84, LeftInner=0x85, RightInner=0x86, RightAngle=0x87.
+ *
+ * forceSetItem mirrors raw nametable writes — earlier-stream items
+ * inside the footprint are clobbered. Items emitted later land on top
+ * via the normal priority-aware `setItem`.
+ */
+function renderPyramid(
+  grid: CanvasGrid,
+  posX: number, posY: number, regularId: number,
+): void {
+  const TILE_LEFT_ANGLE = 0x84;
+  const TILE_LEFT_INNER = 0x85;
+  const TILE_RIGHT_INNER = 0x86;
+  const TILE_RIGHT_ANGLE = 0x87;
+  const SKY = 0x40;
+
+  const isBlocked = (x: number, y: number): boolean => {
+    const cell = grid.getItem(x, y);
+    if (!cell.visible) return false;
+    return !(cell.type !== 0 && cell.tileId === SKY);
+  };
+
+  const put = (x: number, y: number, tileId: number) => {
+    grid.forceSetItem(x, y, { tileId, type: 4, regularId, groundType: 0 });
+  };
+
+  for (let n = 0; n < grid.height; n++) {
+    const leftCol = posX - n;
+    const row = posY + n;
+    if (row >= grid.height) return;
+    if (isBlocked(leftCol, row)) return;
+    put(leftCol, row, TILE_LEFT_ANGLE);
+    for (let i = 0; i < n; i++) {
+      put(leftCol + 1 + i, row, TILE_LEFT_INNER);
+    }
+    for (let i = 0; i < n; i++) {
+      put(leftCol + 1 + n + i, row, TILE_RIGHT_INNER);
+    }
+    put(posX + n + 1, row, TILE_RIGHT_ANGLE);
   }
 }
 

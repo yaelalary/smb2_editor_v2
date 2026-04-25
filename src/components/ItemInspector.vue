@@ -15,7 +15,8 @@ import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
 import { ITEM_NAMES } from '@/rom/nesleveldef';
-import { slotLabel, slotLabelVerbose, slotWorld, slotLevel } from '@/rom/level-layout';
+import { slotLabel, slotLabelVerbose, slotWorld, slotLevel, getFxForSlot } from '@/rom/level-layout';
+import { getWorldGfx } from '@/rom/tile-reader';
 import { MAX_LEVELS, ENTRANCE_ITEM_IDS, ENTERABLE_JAR_IDS, VINE_LADDER_ITEM_IDS } from '@/rom/constants';
 import {
   itemDestination,
@@ -29,7 +30,7 @@ import {
   SetPointerDestinationCommand,
 } from '@/commands/routing-commands';
 import { DeleteItemCommand, MoveItemCommand } from '@/commands/tile-commands';
-import { findRedBgOverwrites } from '@/rom/red-bg-overwrites';
+import { findRuntimeBgOverwrites } from '@/rom/runtime-bg-overwrites';
 import type { LevelBlock, LevelItem, LevelMap } from '@/rom/model';
 import CreatePairedDoorDialog from './CreatePairedDoorDialog.vue';
 
@@ -64,16 +65,22 @@ const isVineOrLadder = computed<boolean>(() => {
 });
 
 /**
- * True when the selected item sits inside a Large Red Platform Background
- * footprint *and* was emitted earlier in the stream — i.e. it'll be wiped
- * out at runtime when the ROM writes the red-bg pattern over it.
+ * True when the selected item sits inside a runtime-composed background
+ * footprint (red bg `0x1F` or pyramid `0x17`) and was emitted earlier in
+ * the stream — i.e. it'll be wiped out at runtime when the ROM writes
+ * the bg pattern over it.
  */
-const isRedBgVictim = computed<boolean>(() => {
+const isRuntimeBgVictim = computed<boolean>(() => {
   void history.revision;
   const it = item.value;
   const b = block.value;
-  if (!it || !b) return false;
-  return findRedBgOverwrites(toRaw(b) as LevelBlock).has(it);
+  const romData = rom.romData;
+  if (!it || !b || !romData) return false;
+  const slot = rom.activeSlot;
+  const world = Math.floor(slot / 30);
+  const fx = getFxForSlot(slot);
+  const gfx = getWorldGfx(romData.rom, world);
+  return findRuntimeBgOverwrites(toRaw(b) as LevelBlock, romData.rom, slot, fx, gfx).has(it);
 });
 
 /** True when the selected item is a Pointer (page scroll-off transition). */
@@ -493,16 +500,17 @@ const itemName = computed<string>(() => {
       Climbable object. Cross-page transitions (e.g. going to the next sub-level) are driven by a Pointer on this page — click the purple chip on the canvas to edit it.
     </div>
 
-    <!-- Red-bg overwrite warning. Items dropped earlier in the stream
-         than a Large Red Platform Background that fall under its 12×N
-         footprint get overwritten in nametable RAM at runtime. The
-         editor renders them on the canvas (so the user can still pick
-         and move them) but the in-game outcome is: they're gone. -->
+    <!-- Runtime-bg overwrite warning. Items dropped earlier in the
+         stream than a runtime-composed background (Large red platform
+         `0x1F` or Pyramid `0x17`) and falling inside its footprint get
+         overwritten in nametable RAM at runtime. The editor renders
+         them on the canvas (so the user can still pick and move them)
+         but the in-game outcome is: they're gone. -->
     <div
-      v-if="isRedBgVictim"
+      v-if="isRuntimeBgVictim"
       class="text-[10px] font-semibold text-red-400 leading-snug"
     >
-      ⚠ Will be erased at runtime — a Large red platform background placed later in the stream covers this tile. Move this item outside the red background's footprint, or place the background earlier so this lands on top.
+      ⚠ Will be erased at runtime — a background object placed later in the stream covers this tile. Move this item outside the background's footprint, or place the background earlier so this lands on top.
     </div>
 
     <!-- Pointer routing section — same page model as doors but page-scoped. -->

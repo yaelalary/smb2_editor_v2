@@ -56,7 +56,17 @@ function getCurrentPalette() {
   return readLevelPalette(romData.rom, rom.activeSlot, (b as { header: { palette: number } }).header.palette);
 }
 
+/**
+ * Library IDs that have a custom preview composition below (drawn from
+ * known tile constants rather than the C++ ITEM_DIM fallback). For these,
+ * `hasPreviewTile` must return true even though their `ITEM_DIM` entry is
+ * all `0xFF` (the C++ punted with a sentinel) — otherwise the UI shows
+ * the hex-id fallback chip instead of the actual sprite.
+ */
+const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([15, 23, 31, 57]);
+
 function hasPreviewTile(itemId: number): boolean {
+  if (CUSTOM_PREVIEW_LIBRARY_IDS.has(itemId)) return true;
   let tiles: readonly number[];
   if (itemId < 48) {
     tiles = ITEM_DIM[itemId] ?? [];
@@ -186,6 +196,17 @@ function drawTile(el: unknown, libraryId: number): void {
     };
     put(0, 0, 0x5d); put(1, 0, 0x5f);
     put(0, 1, 0x5d); put(1, 1, 0x5f);
+  } else if (libraryId === 23) {
+    // Pyramid (rawId 0x17) — at runtime expands into a triangle. The
+    // 4×4 preview can't fit the full shape, so show a 2×2 abstract:
+    // apex tiles (LeftAngle, RightAngle) on top, inner fill (LeftInner,
+    // RightInner) below. Geometrically simplified — the actual row 1 is
+    // 4 tiles wide — but it conveys the four constituent tiles.
+    const put = (x: number, y: number, tileId: number) => {
+      grid.setItem(x, y, { tileId, type: 4, regularId: 23, groundType: 0 });
+    };
+    put(0, 0, 0x84); put(1, 0, 0x87);
+    put(0, 1, 0x85); put(1, 1, 0x86);
   } else {
     renderItem(grid, previewItem, romData.rom, slot, header as never);
   }

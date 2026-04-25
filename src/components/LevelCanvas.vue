@@ -22,7 +22,7 @@ import { DRAG_MIME, ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { PlaceTileCommand, DeleteItemCommand, MoveItemCommand, DeleteItemsCommand, MoveItemsCommand, ResizeItemCommand, libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS, VINE_LADDER_ITEM_IDS } from '@/rom/constants';
 import { buildOrphanIndex, isRoutingItem, pointerDestination, tilePageOf } from '@/commands/routing-commands';
-import { findRedBgOverwrites } from '@/rom/red-bg-overwrites';
+import { findRuntimeBgOverwrites } from '@/rom/runtime-bg-overwrites';
 import { bossExitDoorForSlot } from '@/rom/boss-exit-doors';
 import type { LevelMap } from '@/rom/model';
 import { PlaceEnemyCommand, DeleteEnemyCommand, MoveEnemyCommand, DeleteEnemiesCommand, MoveEnemiesCommand } from '@/commands/enemy-commands';
@@ -141,16 +141,23 @@ const orphanSet = computed<Set<LevelItem>>(() => {
 });
 
 /**
- * Items in the active block that the Large Red Platform Background
- * (item `0x1F`) will overwrite at runtime. Surfaces what the ROM does
- * silently: items earlier in the stream that fall under a red-bg
- * footprint get clobbered when the game writes nametable RAM.
+ * Items in the active block that runtime-composed background objects
+ * (Large Red Platform Background `0x1F`, Pyramid `0x17`) will overwrite
+ * at runtime. Surfaces what the ROM does silently: items earlier in the
+ * stream that fall under a bg footprint get clobbered when the game
+ * writes nametable RAM. Replays the rendering pipeline (ground + items)
+ * so the footprint accounts for ground stopping the descent.
  */
-const redBgOverwriteSet = computed<Set<LevelItem>>(() => {
+const runtimeBgOverwriteSet = computed<Set<LevelItem>>(() => {
   void history.revision;
   const b = block.value;
-  if (!b) return new Set();
-  return findRedBgOverwrites(toRaw(b) as LevelBlock);
+  const romData = rom.romData;
+  if (!b || !romData) return new Set();
+  const slot = rom.activeSlot;
+  const world = Math.floor(slot / 30);
+  const fx = getFxForSlot(slot);
+  const gfx = getWorldGfx(romData.rom, world);
+  return findRuntimeBgOverwrites(toRaw(b) as LevelBlock, romData.rom, slot, fx, gfx);
 });
 
 // ─── Coordinate helpers ─────────────────────────────────────────────
@@ -1028,16 +1035,16 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       }
     }
 
-    // ── Red-bg overwrite warning ──────────────────────────────────
-    // Items emitted earlier in the stream than a Large Red Platform
-    // Background (item 0x1F) get clobbered in nametable RAM at runtime
-    // because the red-bg routine writes its 12-tile rows unconditionally.
-    // Flag them with the same red chip so the user sees what will
-    // disappear in-game before exporting.
-    const redBgVictims = redBgOverwriteSet.value;
-    if (redBgVictims.size > 0) {
+    // ── Runtime-bg overwrite warning ─────────────────────────────
+    // Items emitted earlier in the stream than a runtime-composed
+    // background (Large Red Platform `0x1F`, Pyramid `0x17`) get
+    // clobbered in nametable RAM at runtime — those routines write
+    // their footprints unconditionally. Flag victims with the same
+    // red chip so the user sees what will disappear in-game.
+    const runtimeBgVictims = runtimeBgOverwriteSet.value;
+    if (runtimeBgVictims.size > 0) {
       for (const item of b.items) {
-        if (!redBgVictims.has(item)) continue;
+        if (!runtimeBgVictims.has(item)) continue;
         if (item.tileX < 0 || item.tileY < 0) continue;
         drawWarningChip(item.tileX * TILE_PX, item.tileY * TILE_PX);
       }

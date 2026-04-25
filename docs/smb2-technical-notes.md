@@ -211,15 +211,48 @@ Dispatched via the SMB2 ROM's `CreateObjects_10` jump table to a handler the dis
 
 Geometry generated at runtime:
 
-- **Width is hardcoded at exactly 12 tiles per row.** Row layout: `Left` + 5 × (`MiddleLeft`, `MiddleRight`) + `Right`, using the four `BackgroundTile_TreeBackground{Left,MiddleLeft,MiddleRight,Right}` nametable indices. The outer X loop with `LDX #$02` handles Left/Right ends; the inner `MiddleLoop` with counter `byte_RAM_7 = #$04` runs 5 iterations × 2 tiles.
-- **Height is dynamic — extends down until non-sky.** After each row, the routine increments Y, jumps back to the entry, and re-reads the tile at the new `(x,y)`. If it equals `BackgroundTile_Sky`, draw another row; if it's anything else (ground, wall, another object), `RTS`.
-- **Implicit guard**: the very first instruction reads the tile at the placement cell and exits immediately if it's not sky. Placing this object on a non-sky cell renders nothing.
+- Width is hardcoded at exactly 12 tiles per row. Row layout: `Left` + 5 × (`MiddleLeft`, `MiddleRight`) + `Right`, using the four `BackgroundTile_TreeBackground{Left,MiddleLeft,MiddleRight,Right}` nametable indices (`0x5C`, `0x5D`, `0x5F`, `0x5E` in `src/defs.asm`). The outer X loop with `LDX #$02` handles Left/Right ends; the inner `MiddleLoop` with counter `byte_RAM_7 = #$04` runs 5 iterations × 2 tiles.
+- Height is dynamic — extends down until non-sky. After each row, the routine increments Y, jumps back to the entry, and re-reads the tile at the new `(x,y)`. If it equals `BackgroundTile_Sky` (`0x40`), draw another row; if it's anything else (ground, wall, another object), `RTS`.
+- Implicit guard: the very first instruction reads the tile at the placement cell and exits immediately if it's not sky. Placing this object on a non-sky cell renders nothing.
 
 Item encoding: standard 2-byte regular item — no length field. The runtime extent is computed entirely from neighboring tile state.
 
 Vanilla coverage (via `scripts/find-item.ts 31`): only used in W5-3 sub-sections 2, 3, 5 (slots 141, 142, 144) — 8 placements total, all at `y=0`, `dir=1`, `fx=3`. Designer X-spacing of 24 tiles between adjacent placements is 12 tiles of pattern + 12 tiles of gap, not a property of the object.
 
-Editor representation: [item-renderer.ts:219](src/rom/item-renderer.ts#L219) emits sentinel `0xFD` at the placement cell — same as the C++ reference tool's `DrawRedBg` (`clvldraw_worker.cpp:589`), which punts because reproducing "extends until non-sky" requires simulating the surrounding level state. With the editor's existing ground/items grid, a faithful renderer could write 12 tiles per row from `(posX, posY)` downward and stop on the first row where any cell in `[posX..posX+11]` is non-empty.
+Runtime stream-order interaction: items emitted earlier than the red bg in the byte stream get clobbered when the red bg writes its 12-tile rows over them — this is just sequential nametable RAM writes, no priority arbitration. Items emitted later overwrite the red bg in the cells they touch.
+
+### Pyramid (item `23` / `0x17`)
+
+Dispatched via `CreateObjects_10` entry `$17` → handler `CreateObject_Pyramid` in `Xkeeper0/smb2 src/prg-6-7.asm`. Same family as item `0x1F` (red platform bg): runtime-composed background, hardcoded shape, dynamic height, sky-gated descent.
+
+Geometry generated at runtime:
+
+- Shape is a symmetric triangle expanding downward. Row 0 is the apex: 2 tiles `[LeftAngle, RightAngle]`. Row N (1..) writes `2N+2` tiles: `[LeftAngle, N × LeftInner, N × RightInner, RightAngle]`. Each new row starts one column further left than the previous: after `INC byte_RAM_8`, the routine computes `Y = (E7 + 0x10) - byte_RAM_8`, shifting the left edge by `counter` cells per descent.
+- Height is dynamic with the same sky-check pattern as the red bg — before each row, read the leftmost cell at the new `(col, row)`; if not `BackgroundTile_Sky` (`0x40`), `RTS`. Pyramid stops at the first row whose leftmost column is blocked.
+- Implicit guard: placing on a non-sky cell renders nothing (first sky check fails).
+
+Tile constants (`src/defs.asm`):
+- `BackgroundTile_PyramidLeftAngle = 0x84` (left slope edge)
+- `BackgroundTile_PyramidLeft = 0x85` (inner left fill)
+- `BackgroundTile_PyramidRight = 0x86` (inner right fill)
+- `BackgroundTile_PyramidRightAngle = 0x87` (right slope edge)
+
+These are nametable indices interpreted via the loaded CHR bank — visual depends on the world.
+
+Vanilla coverage (via `scripts/find-item.ts 23`): 7 slots; visible placements only in 2-1·1 (×4 at x = 10, 2, 23, 151), 2-3·2 (×1 at (152, 4)), and 6-3·5 (×1 at (39, 4)) — all `fx=2` (W2/desert tile bank, where `0x84-0x87` render as sandstone). Slots 1-3·3, 3-2·2, 7-2·2, 7-2·7 carry pyramid items at `(-1, -1)` — present in the stream but unreachable by the parser's cursor walk (e.g. after `backToStart`, or in vertical-level slots where horizontal-pyramid math doesn't apply).
+
+C++ reference tool (`clvldraw_worker.cpp:558`, `DrawPyramidEx`) emits sentinel `0xFB` ("11?" pink placeholder) — same punt-pattern as the red bg.
+
+### Pattern across `CreateObjects_10` runtime-composed handlers
+
+Every entry in this jump table that draws a "background object that extends to ground" follows the same template:
+
+1. Read the placement cell, compare to `BackgroundTile_Sky` (`0x40`); if not sky, `RTS`.
+2. Write a row of fixed-or-counter-derived width using hardcoded tile constants from `src/defs.asm`.
+3. Advance Y to the next row (with optional left-shift for triangular shapes).
+4. Loop back to step 1.
+
+Width and per-row tile pattern are encoded entirely in 6502 control flow and constants — not in any data table the editor could read. `Get*Dim` lookups don't help here. Editor faithfulness requires porting the routine itself.
 
 ## Rendering quirks (editor)
 

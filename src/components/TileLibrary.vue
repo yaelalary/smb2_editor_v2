@@ -135,6 +135,7 @@ function drawTile(el: unknown, libraryId: number): void {
   // flow through `renderHorizontal` (vid 10, 11) which reads size from
   // the rawId low nibble — just pre-encode the width we want.
   const PREVIEW_HORZ_SIZE: Partial<Record<number, number>> = {
+    50: 1, // Herb(s) group → 2 herbs side-by-side (distinguishes from single)
     58: 1, // Red wood platform → 2×1
     59: 1, // Cloud platform → 2×1
   };
@@ -253,10 +254,16 @@ function drawTile(el: unknown, libraryId: number): void {
   ctx.restore();
 
   // Herb variants (items 32-42 / 43 / 45) paint a small content sprite
-  // above the tile so the library is readable at a glance.
+  // above the tile so the library is readable at a glance. The multi-
+  // herb (id 50) draws one overlay per tile of its preview footprint,
+  // matching how the canvas paints groups in-level.
   if (hasHerbOverlay(libraryId)) {
     const enemyAtlas = enemyAtlasForLevel((b as { header: { enemyColor: number } }).header.enemyColor);
-    drawHerbOverlay(ctx, 0, overlayHeadroom, METATILE_SIZE, libraryId, enemyAtlas);
+    const tilesWide = maxX - minX + 1;
+    const overlayCount = libraryId === 50 ? tilesWide : 1;
+    for (let i = 0; i < overlayCount; i++) {
+      drawHerbOverlay(ctx, i * METATILE_SIZE, overlayHeadroom, METATILE_SIZE, libraryId, enemyAtlas);
+    }
   }
 
   canvas.dataset['drawn'] = key;

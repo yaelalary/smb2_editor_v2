@@ -28,6 +28,7 @@ const HERB_CONTENT_TILE: Record<number, number> = {
   39: 0x55, // 1-UP mushroom
   40: 0x45, // POW block
   42: 0x08, // Bob-omb (walking enemy)
+  50: 0x41, // multi-herb (Herb(s) with small vegetable) — same content as 34
   // 43/45 "sub-space Mushroom" are already rendered AS a mushroom — no
   // overlay needed (would just be a mushroom on top of a mushroom).
 };

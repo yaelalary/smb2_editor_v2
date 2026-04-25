@@ -56,7 +56,8 @@
       "Read(//c/Users/Yael/Documents/.claude/plans/**)",
       "Bash(npx tsx *)",
       "Bash(gh api *)",
-      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['path']\\) for e in d['tree'] if 'object' in e['path'].lower\\(\\) or 'level' in e['path'].lower\\(\\) or 'platform' in e['path'].lower\\(\\)][:60]\")"
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['path']\\) for e in d['tree'] if 'object' in e['path'].lower\\(\\) or 'level' in e['path'].lower\\(\\) or 'platform' in e['path'].lower\\(\\)][:60]\")",
+      "Read(//tmp/claude/c--Users-Yael-Documents-Dev-Web-smb2-editor-v2/b2d8e9c2-8652-455f-af84-add428b4b2e9/tasks/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2\\.claude\\skills",

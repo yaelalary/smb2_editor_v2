@@ -29,7 +29,7 @@ export const ITEM_CATEGORIES: ReadonlyArray<ItemCategory> = [
   },
   {
     label: 'Herbs & Pickups',
-    items: [32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45],
+    items: [32, 33, 34, 50, 35, 36, 37, 38, 39, 40, 41, 42, 43, 45],
   },
   {
     label: 'Vegetation',

@@ -25,7 +25,7 @@ import { renderItem } from '@/rom/item-renderer';
 import { drawCanvas } from '@/rom/canvas-draw';
 import { libraryIdToRomByte } from '@/commands/tile-commands';
 import { ENTRANCE_ITEM_IDS } from '@/rom/constants';
-import { drawHerbOverlay, enemyAtlasForLevel, hasHerbOverlay, preloadHerbOverlays } from '@/ui/herb-overlays';
+import { drawHerbOverlay, enemyAtlasForLevel, hasHerbOverlay, herbOverlayHeadroomPx, preloadHerbOverlays } from '@/ui/herb-overlays';
 import type { LevelItem } from '@/rom/model';
 import {
   preloadAllAtlases,
@@ -279,9 +279,10 @@ function drawTile(el: unknown, libraryId: number): void {
   const tileW = (maxX - minX + 1) * METATILE_SIZE;
   const tileH = (maxY - minY + 1) * METATILE_SIZE;
   // Herb overlays float above the tile (y negative). Reserve headroom
-  // so the sprite doesn't get clipped by the canvas top.
+  // so the sprite doesn't get clipped by the canvas top — varies per
+  // item since some lift the overlay fully above (sub-space mushrooms).
   const overlayHeadroom = hasHerbOverlay(libraryId)
-    ? Math.ceil(METATILE_SIZE * 0.55)
+    ? herbOverlayHeadroomPx(libraryId, METATILE_SIZE)
     : 0;
   const w = tileW;
   const h = tileH + overlayHeadroom;
@@ -305,7 +306,9 @@ function drawTile(el: unknown, libraryId: number): void {
   // Herb variants (items 32-42 / 43 / 45) paint a small content sprite
   // above the tile so the library is readable at a glance. The multi-
   // herb (id 50) draws one overlay per tile of its preview footprint,
-  // matching how the canvas paints groups in-level.
+  // matching how the canvas paints groups in-level. Sub-space mushrooms
+  // (43, 45) overlay a BG-atlas door tile, which needs the level's
+  // colorized BG strip — pass it through.
   if (hasHerbOverlay(libraryId)) {
     const enemyAtlas = enemyAtlasForLevel((b as { header: { enemyColor: number } }).header.enemyColor);
     const tilesWide = maxX - minX + 1;

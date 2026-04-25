@@ -28,10 +28,36 @@ const HERB_CONTENT_TILE: Record<number, number> = {
   39: 0x55, // 1-UP mushroom
   40: 0x45, // POW block
   42: 0x08, // Bob-omb (walking enemy)
+  43: 0x53, // 1st sub-space Mushroom — potion overlay (same as item 38)
+  45: 0x53, // 2nd sub-space Mushroom — potion overlay (same as item 38)
   50: 0x41, // multi-herb (Herb(s) with small vegetable) — same content as 34
-  // 43/45 "sub-space Mushroom" are already rendered AS a mushroom — no
-  // overlay needed (would just be a mushroom on top of a mushroom).
 };
+
+/**
+ * Per-item override of the overlay's vertical offset, expressed as a
+ * fraction of the overlay's own size: how much of the overlay sits ABOVE
+ * the host tile's top edge. Default is `0.55` (overlay overlaps the tile
+ * by ~45%, so the content sprite reads as bursting out of the herb).
+ * Sub-space mushrooms render with the full mushroom sprite as base, so
+ * the potion overlay sits fully above the tile to keep the silhouettes
+ * from merging.
+ */
+const HERB_OVERLAY_Y_FRAC: Record<number, number> = {
+  43: 1.2,
+  45: 1.2,
+};
+
+/**
+ * Vertical headroom (in pixels) the overlay needs above the host tile.
+ * The library uses this to enlarge the preview canvas so the overlay
+ * doesn't get clipped at the top when a per-item `Y_FRAC` lifts it
+ * higher than the default.
+ */
+export function herbOverlayHeadroomPx(itemId: number, tileSizePx: number): number {
+  const dSize = tileSizePx * 0.75;
+  const yFrac = HERB_OVERLAY_Y_FRAC[itemId] ?? 0.55;
+  return Math.ceil(dSize * yFrac);
+}
 
 /**
  * Per-item atlas override. Item 37 (bomb) shares tile positions across
@@ -53,6 +79,7 @@ const HERB_CONTENT_FIXED_ATLAS: Record<number, number> = {
 const HERB_ASSET_URL: Record<number, string> = {
   35: rocketOverlayUrl, // rocket — user-supplied PNG
 };
+
 
 // Lazy-loaded asset cache. Images resolve asynchronously; while an
 // image is still loading the overlay paints nothing for that herb,
@@ -114,7 +141,7 @@ export function drawHerbOverlay(
 ): void {
   const dSize = tileSizePx * 0.75;
   const dx = cssX + (tileSizePx - dSize) / 2;
-  const dy = cssY - dSize * 0.55;
+  const dy = cssY - dSize * (HERB_OVERLAY_Y_FRAC[itemId] ?? 0.55);
 
   // Asset path: blit the user-supplied PNG verbatim.
   const assetUrl = HERB_ASSET_URL[itemId];

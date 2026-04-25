@@ -184,6 +184,20 @@ function drawTile(el: unknown, libraryId: number): void {
     };
     put(0, 0, d.topleft);
     put(0, 1, d.middle);
+  } else if (libraryId === 6 || libraryId === 7 || libraryId === 8) {
+    // Jars "extends to ground" (vid 6/7/8) — `renderVertical` extends
+    // down to the next 0x0F-row boundary, overflowing the 4×4 preview.
+    // Compact 1×2: jar rim + one body segment. Each jar has its own
+    // topleft tile (different rims) but shares the middle, so the
+    // preview correctly distinguishes the three variants. ROM-resolved
+    // via `getVertDim`. BG-atlas (isVertBg(0x06..0x08) === true).
+    const d = getVertDim(romData.rom, libraryId, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: libraryId, groundType: 0 });
+    };
+    put(0, 0, d.topleft);
+    put(0, 1, d.middle);
   } else if (libraryId === 12) {
     // Vine, extends to ground (vid 12) — same overflow problem as the
     // red pillar: `renderVertical` extends down 14 tiles. Compact 1×2

@@ -172,6 +172,19 @@ function drawTile(el: unknown, libraryId: number): void {
     put(1, 0, d.topright);
     put(0, 1, d.left);
     put(1, 1, d.right);
+  } else if (libraryId === 60) {
+    // Waterfall (vid 12 in extended-item space, rawId 0xF0) — at default
+    // size `renderMassive` yields a 1-wide × 15-tall strip that overflows
+    // the 4×4 preview into an unreadable sliver. Compose a 2×2 sample
+    // from the ROM-resolved dim (`getMasvDim(0x0c)`): top row from the
+    // "top" tile, body row from "middle". BG-atlas (isMasvBg(0x0c) === true).
+    const d = getMasvDim(romData.rom, 0x0c, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 60, groundType: 0 });
+    };
+    put(0, 0, d.top); put(1, 0, d.top);
+    put(0, 1, d.middle); put(1, 1, d.middle);
   } else if (libraryId === 15) {
     // Red pillar (vid 15) — `renderVertical` sizes it to fill down to the
     // next 0x0F-row boundary (~14 tall at posY=0), overflowing the 4×4

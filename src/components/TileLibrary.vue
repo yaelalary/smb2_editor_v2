@@ -184,6 +184,55 @@ function drawTile(el: unknown, libraryId: number): void {
     };
     put(0, 0, d.topleft);
     put(0, 1, d.middle);
+  } else if (libraryId === 12) {
+    // Vine, extends to ground (vid 12) — same overflow problem as the
+    // red pillar: `renderVertical` extends down 14 tiles. Compact 1×2
+    // sample: leaf-bundle top + one body segment. ROM-resolved (per-
+    // world) tiles via `getVertDim(0x0c)`. BG-atlas (isVertBg(0x0c) === true).
+    const d = getVertDim(romData.rom, 0x0c, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 12, groundType: 0 });
+    };
+    put(0, 0, d.topleft);
+    put(0, 1, d.middle);
+  } else if (libraryId === 13) {
+    // Vine, extends to ground (no top) (vid 13) — same overflow as the
+    // other vines, but this variant has no leaf cap and no boule (the
+    // ROM gives `topleft = middle = bottomleft = body`). Compact 1×2:
+    // two body segments stacked, signalling "plain trunk, no terminator".
+    const d = getVertDim(romData.rom, 0x0d, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 13, groundType: 0 });
+    };
+    put(0, 0, d.middle);
+    put(0, 1, d.middle);
+  } else if (libraryId === 22) {
+    // Tree, extends to ground (vid 22) — `renderVertical` extends down
+    // 14 tiles like the other "extends to ground" vertical objects.
+    // Compact 1×2: leaf-cap top + one trunk segment. ROM-resolved
+    // (per-world) tiles via `getVertDim(0x16)`. BG-atlas (isVertBg(0x16) === true).
+    const d = getVertDim(romData.rom, 0x16, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 22, groundType: 0 });
+    };
+    put(0, 0, d.topleft);
+    put(0, 1, d.middle);
+  } else if (libraryId === 18) {
+    // Vine, extends to top (vid 18) — `renderVertical` inverted draws the
+    // "boule" anchor at the placement and grows upward, overflowing the
+    // preview. Compact 1×2: body on top, boule on bottom. ROM data for
+    // vid 0x12 has topleft=middle=body (no distinct leaf cap), so the
+    // recognizable feature is the boule terminator.
+    const d = getVertDim(romData.rom, 0x12, world, EMPTY_DIM);
+    const put = (x: number, y: number, tileId: number) => {
+      if (tileId === 0xff) return;
+      grid.setItem(x, y, { tileId, type: 4, regularId: 18, groundType: 0 });
+    };
+    put(0, 0, d.middle);
+    put(0, 1, d.bottomleft);
   } else if (libraryId === 31) {
     // Large red platform background (rawId 0x1F) — at runtime the ROM
     // routine writes 12-tile rows extending downward until non-sky. That

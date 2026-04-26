@@ -18,7 +18,7 @@ import { ITEM_NAMES, ITEM_DIM, getItemDimTiles } from '@/rom/nesleveldef';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { getFxForSlot } from '@/rom/level-layout';
-import { getWorldGfx, getMasvDim, getVertDim } from '@/rom/tile-reader';
+import { getWorldGfx, getMasvDim, getVertDim, getSingDim } from '@/rom/tile-reader';
 import { readLevelPalette } from '@/rom/palette-reader';
 import { CanvasGrid } from '@/rom/canvas-grid';
 import { renderItem } from '@/rom/item-renderer';
@@ -63,7 +63,7 @@ function getCurrentPalette() {
  * all `0xFF` (the C++ punted with a sentinel) — otherwise the UI shows
  * the hex-id fallback chip instead of the actual sprite.
  */
-const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([15, 23, 31, 57]);
+const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([15, 23, 31, 56, 57]);
 
 function hasPreviewTile(itemId: number): boolean {
   if (CUSTOM_PREVIEW_LIBRARY_IDS.has(itemId)) return true;
@@ -172,6 +172,14 @@ function drawTile(el: unknown, libraryId: number): void {
     put(1, 0, d.topright);
     put(0, 1, d.left);
     put(1, 1, d.right);
+  } else if (libraryId === 56) {
+    // Whale (vid 8) — `renderMassive` produces a degenerate 1-wide ×
+    // 14-tall strip. Reuse the exact same render path as the Whale eye
+    // (item 46): `getSingDim(0x2e)` reads the real eye tile from
+    // `rom[0xCD4E]`, not the static fallback `0x4F` from ITEM_DIM.
+    // BG-atlas (isSingBg(0x2e) === true).
+    const d = getSingDim(romData.rom, 46, world, EMPTY_DIM);
+    grid.setItem(0, 0, { tileId: d.topleft, type: 4, regularId: 56, groundType: 0 });
   } else if (libraryId === 60) {
     // Waterfall (vid 12 in extended-item space, rawId 0xF0) — at default
     // size `renderMassive` yields a 1-wide × 15-tall strip that overflows

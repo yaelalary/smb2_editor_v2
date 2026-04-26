@@ -57,7 +57,9 @@
       "Bash(npx tsx *)",
       "Bash(gh api *)",
       "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['path']\\) for e in d['tree'] if 'object' in e['path'].lower\\(\\) or 'level' in e['path'].lower\\(\\) or 'platform' in e['path'].lower\\(\\)][:60]\")",
-      "Read(//tmp/claude/c--Users-Yael-Documents-Dev-Web-smb2-editor-v2/b2d8e9c2-8652-455f-af84-add428b4b2e9/tasks/**)"
+      "Read(//tmp/claude/c--Users-Yael-Documents-Dev-Web-smb2-editor-v2/b2d8e9c2-8652-455f-af84-add428b4b2e9/tasks/**)",
+      "Bash(curl -sS \"https://raw.githubusercontent.com/Xkeeper0/smb2/master/src/prg-2-3.asm\" -o /tmp/smb2-prg-2-3.asm)",
+      "Read(//tmp/**)"
     ],
     "additionalDirectories": [
       "c:\\Users\\Yael\\Documents\\Dev\\Web\\smb2_editor_v2\\.claude\\skills",

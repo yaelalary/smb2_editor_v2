@@ -1411,6 +1411,59 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       }
     }
 
+    // ── Whale-spout peak preview ────────────────────────────────────
+    // The spout enemy ($28 / 40) is a 1×1 trigger in the data, but the
+    // ROM routine `EnemyBehavior_WhaleSpout` (Xkeeper0/smb2 prg-2-3.asm)
+    // animates it upward each cycle. Integrating its Q4.4 physics
+    // (launch velocity `#$D0` = -3 px/frame, gravity +1/16 px/frame²)
+    // gives a peak of ~70 pixels above the placement Y. We render a
+    // faded ghost sprite at that peak plus a 2-pixel-wide stippled
+    // column linking placement to peak — a level-design aid so the user
+    // can plan the level around the spout's reachable height.
+    if (enemyBlock && enemyAtlasSrc) {
+      const SPOUT_PEAK_PX = 70;
+      const SPOUT_TILE = ENEMY_DIM[40]?.[0] ?? 0x64;
+      const isH = b.header.direction === 1;
+      const { sx: spoutSx, sy: spoutSy } = metatileRect(SPOUT_TILE);
+      // 3-wide checkerboard column (red + white, 1px cells) — copied
+      // pixel-for-pixel from the body of metatile `$64` in atlas-1
+      // (rows 10..15, cols 6..8): row N = R W R, row N+1 = W R W,
+      // alternating. The exact red `#DE2900` is sampled from that same
+      // pattern, so the column reads as a seamless extension of the
+      // splash sprite at the anchor.
+      const SPOUT_RED = '#de2900';
+      const SPOUT_WHITE = '#ffffff';
+      const COL_W = 3;
+      ctx.save();
+      ctx.globalAlpha = 0.4;
+      for (let pageIdx = 0; pageIdx < enemyBlock.pages.length; pageIdx++) {
+        const page = enemyBlock.pages[pageIdx]!;
+        for (const enemy of page.enemies) {
+          if ((enemy.id & 0x7f) !== 40) continue;
+          if (skipSet.has(enemy)) continue;
+          const { absX, absY } = enemyFootprint(enemy, pageIdx, isH);
+          const baseY = absY * TILE_PX;
+          const peakY = baseY - SPOUT_PEAK_PX;
+          // Column anchored at metatile-relative col 6 (matches the
+          // sprite's body offset within the 16-wide tile).
+          const colX = absX * TILE_PX + 6;
+          const yStart = peakY + TILE_PX;
+          for (let y = yStart; y < baseY; y++) {
+            const row = y - yStart;
+            for (let dx = 0; dx < COL_W; dx++) {
+              ctx.fillStyle = ((row + dx) & 1) === 0 ? SPOUT_RED : SPOUT_WHITE;
+              ctx.fillRect(colX + dx, y, 1, 1);
+            }
+          }
+          ctx.drawImage(
+            enemyAtlasSrc, spoutSx, spoutSy, METATILE_SIZE, METATILE_SIZE,
+            absX * TILE_PX, peakY, TILE_PX, TILE_PX,
+          );
+        }
+      }
+      ctx.restore();
+    }
+
     // Group ghost preview — one alpha wrap around the whole loop so the
     // blend cost is paid once for N enemies.
     if (enemyDragActive && selectedEnemies.value.length > 0 && enemyAtlasSrc) {

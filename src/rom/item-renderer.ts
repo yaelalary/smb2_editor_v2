@@ -215,9 +215,30 @@ function renderSpecialRegular(
       break;
     }
     case 23: renderPyramid(grid, posX, posY, regularId); break;
+    case 26: renderHorn(grid, posX, posY, regularId); break;
     case 30: emit(grid, 0xfc, posX, posY, regularId, 0); break; // desert-entrance sentinel
     case 31: renderLargeRedPlatformBg(grid, posX, posY, regularId); break;
   }
+}
+
+/**
+ * Item 0x1A — "Vegetable thrower" / Horn.
+ *
+ * Faithful port of the ROM routine `CreateObject_Horn` in
+ * Xkeeper0/smb2 src/prg-6-7.asm (dispatch via `CreateObjects_10` $1A).
+ * Always a fixed 2×2 sprite — one "horn" of Wart's machine. The full
+ * machine in 7-2·6 is three separate placements forming a triangle.
+ * No sky gate, no size nibble: writes unconditionally. BG-atlas tiles
+ * `0x8C..0x8F` from src/defs.asm (HornTopLeft/Right + BottomLeft/Right).
+ */
+function renderHorn(
+  grid: CanvasGrid,
+  posX: number, posY: number, regularId: number,
+): void {
+  emit(grid, 0x8c, posX,     posY,     regularId, 4);
+  emit(grid, 0x8d, posX + 1, posY,     regularId, 4);
+  emit(grid, 0x8e, posX,     posY + 1, regularId, 4);
+  emit(grid, 0x8f, posX + 1, posY + 1, regularId, 4);
 }
 
 /**
@@ -419,7 +440,7 @@ export function renderItem(
     case 24: case 25:
       renderMassive(grid, rom, rawId, world, item.tileX, item.tileY, regularId);
       return;
-    case 14: case 16: case 23: case 30: case 31:
+    case 14: case 16: case 23: case 26: case 30: case 31:
       renderSpecialRegular(grid, rom, rawId, world, item.tileX, item.tileY, regularId);
       return;
     default: {

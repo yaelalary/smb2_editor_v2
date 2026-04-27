@@ -63,7 +63,7 @@ function getCurrentPalette() {
  * all `0xFF` (the C++ punted with a sentinel) — otherwise the UI shows
  * the hex-id fallback chip instead of the actual sprite.
  */
-const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([15, 23, 31, 56, 57]);
+const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([15, 23, 26, 31, 56, 57]);
 
 function hasPreviewTile(itemId: number): boolean {
   if (CUSTOM_PREVIEW_LIBRARY_IDS.has(itemId)) return true;
@@ -172,6 +172,16 @@ function drawTile(el: unknown, libraryId: number): void {
     put(1, 0, d.topright);
     put(0, 1, d.left);
     put(1, 1, d.right);
+  } else if (libraryId === 26) {
+    // Vegetable thrower / Horn (rawId 0x1A) — at runtime each placement
+    // draws a fixed 2×2 of horn tiles (0x8C..0x8F) via CreateObject_Horn
+    // (Xkeeper0/smb2 src/prg-6-7.asm). The library preview matches that
+    // 2×2 layout 1:1. BG-atlas tiles, no per-world dim lookup needed.
+    const put = (x: number, y: number, tileId: number) => {
+      grid.setItem(x, y, { tileId, type: 4, regularId: 26, groundType: 0 });
+    };
+    put(0, 0, 0x8c); put(1, 0, 0x8d);
+    put(0, 1, 0x8e); put(1, 1, 0x8f);
   } else if (libraryId === 56) {
     // Whale (vid 8) — `renderMassive` produces a degenerate 1-wide ×
     // 14-tall strip. Reuse the exact same render path as the Whale eye

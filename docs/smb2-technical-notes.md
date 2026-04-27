@@ -243,6 +243,22 @@ Vanilla coverage (via `scripts/find-item.ts 23`): 7 slots; visible placements on
 
 C++ reference tool (`clvldraw_worker.cpp:558`, `DrawPyramidEx`) emits sentinel `0xFB` ("11?" pink placeholder) — same punt-pattern as the red bg.
 
+### Horn / Vegetable thrower (item `26` / `0x1A`)
+
+Dispatched via `CreateObjects_10` entry `$1A` → handler `CreateObject_Horn` in `Xkeeper0/smb2 src/prg-6-7.asm`. Despite the editor's `ITEM_NAMES` label ("Vegetable thrower used in Wart's room"), one item draws a single "horn" — a fixed 2×2 tile block. The complete machine seen in Wart's room is three separate item-26 placements arranged as a triangle.
+
+Geometry generated at runtime: always exactly 4 tiles at `(x..x+1, y..y+1)`:
+- `(x,   y)` = `BackgroundTile_HornTopLeft = 0x8C`
+- `(x+1, y)` = `BackgroundTile_HornTopRight = 0x8D`
+- `(x,   y+1)` = `BackgroundTile_HornBottomLeft = 0x8E`
+- `(x+1, y+1)` = `BackgroundTile_HornBottomRight = 0x8F`
+
+No size nibble, no dispatch on level state, no sky gate — unlike the red bg and pyramid handlers, the horn writes its 2×2 unconditionally.
+
+Vanilla coverage (via `scripts/find-item.ts 26`): 7-2·6 (slot 195, Wart's room) places three horns at `(34, 9)`, `(32, 10)`, `(36, 10)` — top center + bottom-left + bottom-right of the triangular machine. 3-3·4 (slot 83, vertical) carries one more at `(-1, -1)` (parser doesn't resolve absolute positions in that vertical level).
+
+Editor representation: neither the C++ reference tool nor our port renders this item — `renderItem` ([item-renderer.ts:406-424](src/rom/item-renderer.ts)) has no case for `0x1A`, and the `default` branch returns silently for rawId `< 0x30`, so the three horns in 7-2·6 are invisible on the canvas. Same gap exists in `clvldraw_worker.cpp`.
+
 ### Pattern across `CreateObjects_10` runtime-composed handlers
 
 Every entry in this jump table that draws a "background object that extends to ground" follows the same template:

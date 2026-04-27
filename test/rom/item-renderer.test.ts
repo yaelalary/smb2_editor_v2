@@ -194,6 +194,18 @@ describe('renderItem — horizontal items (GetHorzDim)', () => {
 // ─── Sentinel items (pyramid, star bg) ─────────────────────────────
 
 describe('renderItem — sentinel items', () => {
+  it('horn / vegetable thrower (rawId 26) draws a fixed 2×2 from tiles 0x8C-0x8F', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(16, 15, 3, 1, true);
+    renderItem(grid, regularItem(26, 5, 5), rom, 0, testHeader());
+    expect(grid.getItem(5, 5).tileId).toBe(0x8c);
+    expect(grid.getItem(6, 5).tileId).toBe(0x8d);
+    expect(grid.getItem(5, 6).tileId).toBe(0x8e);
+    expect(grid.getItem(6, 6).tileId).toBe(0x8f);
+    expect(grid.getItem(5, 5).type).toBe(4);
+    expect(grid.getItem(7, 5).visible).toBe(false);
+  });
+
   it('pyramid (rawId 23) draws an expanding triangle with 4 distinct tiles', () => {
     const rom = makeSyntheticRom();
     const grid = new CanvasGrid(16, 15, 3, 1, true);

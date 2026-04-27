@@ -1548,16 +1548,6 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
     ctx.setLineDash([]);
   }
 
-  // Info overlay.
-  ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(0, 0, 220, 28);
-  ctx.fillStyle = '#fff';
-  ctx.font = '11px system-ui, sans-serif';
-  ctx.fillText(
-    `${widthTiles}×${heightTiles} tiles · ${b.items.filter(i => i.tileX >= 0).length} items · ${b.header.direction === 1 ? 'horiz' : 'vert'}`,
-    6,
-    18,
-  );
 }
 
 function redraw(): void {

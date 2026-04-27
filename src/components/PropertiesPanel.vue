@@ -17,6 +17,7 @@ import { computed } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import PaletteEditor from './PaletteEditor.vue';
 import ItemInspector from './ItemInspector.vue';
+import EnemyInspector from './EnemyInspector.vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
@@ -30,10 +31,15 @@ const rom = useRomStore();
 const history = useHistoryStore();
 const editor = useEditorStore();
 
-const selectionCount = computed(() => {
+const itemCount = computed(() => {
   void history.revision;
   return editor.selectedItems.length;
 });
+const enemyCount = computed(() => {
+  void history.revision;
+  return editor.selectedEnemies.length;
+});
+const selectionCount = computed(() => itemCount.value + enemyCount.value);
 
 const block = computed<LevelBlock | null>(() => {
   void history.revision; // reactive dependency for model mutations
@@ -91,8 +97,11 @@ const FIELDS: FieldDef[] = [
       Select a level to edit properties.
     </div>
 
-    <!-- Single item selected → Item Inspector takes over -->
-    <ItemInspector v-else-if="selectionCount === 1" />
+    <!-- Single tile item selected → Item Inspector -->
+    <ItemInspector v-else-if="itemCount === 1 && enemyCount === 0" />
+
+    <!-- Single enemy selected → Enemy Inspector -->
+    <EnemyInspector v-else-if="enemyCount === 1 && itemCount === 0" />
 
     <!-- Multi-selection → count summary, no per-item edits -->
     <div

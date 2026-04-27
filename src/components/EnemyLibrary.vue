@@ -6,13 +6,14 @@
  * enemies. Drag from here onto the canvas to place enemies.
  * Uses atlas-8 (enemy sprites) with palette colorization.
  */
-import { onMounted, ref, watch, nextTick } from 'vue';
+import { computed, onMounted, ref, watch, nextTick } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { ENEMY_NAMES, ENEMY_DIM } from '@/rom/nesleveldef';
 import { ENEMY_DRAG_MIME } from '@/rom/item-categories';
 import { activeDrag, hideNativeDragImage } from '@/ui/drag-state';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
+import { useEditorStore } from '@/stores/editor';
 import { getFxForSlot } from '@/rom/level-layout';
 import {
   getAtlasImage,
@@ -22,8 +23,22 @@ import {
 } from '@/assets/metatiles';
 const rom = useRomStore();
 const history = useHistoryStore();
+const editor = useEditorStore();
 const atlasReady = ref(false);
 const drawGeneration = ref(0);
+
+/**
+ * Enemy ID matching the currently-selected canvas enemy, or null when
+ * 0 or >1 enemies are selected. Drives the library card highlight and
+ * the scroll-into-view watcher below — same pattern as TileLibrary.
+ * The high bit (hidden flag) is masked off so 92 mirrors 28, etc.
+ */
+const highlightedEnemyId = computed<number | null>(() => {
+  void history.revision;
+  const sel = editor.selectedEnemies;
+  if (sel.length !== 1) return null;
+  return sel[0]!.enemy.id & 0x7f;
+});
 
 onMounted(async () => {
   await preloadAllAtlases();
@@ -33,6 +48,22 @@ onMounted(async () => {
 watch(
   () => [rom.activeSlot, history.revision],
   () => { drawGeneration.value++; nextTick(() => { drawGeneration.value++; }); },
+);
+
+// Auto-scroll the highlighted card into view whenever the canvas selection
+// changes. Awaits `nextTick` then two RAFs so the DOM read happens after
+// Vue's patch cycle and the browser's layout/paint — same safety pattern
+// as TileLibrary, which avoids "Cannot set properties of null" races.
+watch(
+  () => highlightedEnemyId.value,
+  async (id) => {
+    if (id === null) return;
+    await nextTick();
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const el = document.querySelector<HTMLElement>(`[data-enemy-id="${id}"]`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  },
 );
 
 interface EnemyCategory {
@@ -154,12 +185,16 @@ function drawEnemy(el: unknown, eid: number): void {
           <div
             v-for="eid in cat.ids"
             :key="eid"
+            :data-enemy-id="eid"
             :draggable="true"
             :title="enemyName(eid)"
-            class="flex items-center gap-2 px-2 py-1.5 rounded
-                   cursor-grab active:cursor-grabbing
-                   hover:bg-panel-subtle transition-colors
-                   border border-transparent hover:border-panel-border"
+            :class="[
+              'flex items-center gap-2 px-2 py-1.5 rounded scroll-mt-10 scroll-mb-2',
+              'cursor-grab active:cursor-grabbing transition-colors border',
+              highlightedEnemyId === eid
+                ? 'bg-accent/20 border-accent ring-1 ring-accent'
+                : 'border-transparent hover:bg-panel-subtle hover:border-panel-border',
+            ]"
             @dragstart="(e) => onDragStart(e, eid)"
             @dragend="onDragEnd"
           >

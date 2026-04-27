@@ -7,7 +7,17 @@
 
 import { ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
-import type { LevelItem } from '@/rom/model';
+import type { EnemyItem, LevelItem } from '@/rom/model';
+
+/**
+ * Selected enemy on the canvas. The page index is needed alongside the
+ * `EnemyItem` because enemies live in a per-page list — without the page
+ * we can't compute the absolute (x, y) position.
+ */
+export interface EnemySelection {
+  readonly enemy: EnemyItem;
+  readonly pageIndex: number;
+}
 
 export type EditorTool = 'tiles' | 'enemies' | 'ground';
 
@@ -44,5 +54,13 @@ export const useEditorStore = defineStore('editor', () => {
    */
   const selectedItems = shallowRef<LevelItem[]>([]);
 
-  return { activeTool, showEnemies, selectedGroundSegment, selectedItems };
+  /**
+   * Currently-selected enemies on the canvas. Same `shallowRef` reasoning
+   * as `selectedItems` — the canvas, the EnemyLibrary highlight, and the
+   * PropertiesPanel all use reference identity to render selection state
+   * and per-enemy properties.
+   */
+  const selectedEnemies = shallowRef<EnemySelection[]>([]);
+
+  return { activeTool, showEnemies, selectedGroundSegment, selectedItems, selectedEnemies };
 });

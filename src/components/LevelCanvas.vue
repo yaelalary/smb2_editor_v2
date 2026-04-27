@@ -60,21 +60,18 @@ const scrollContainerRef = ref<HTMLDivElement | null>(null);
 // currently-selected entrance/jar. The store uses `shallowRef` —
 // see the comment on `selectedEnemies` below for why that matters
 // (command indexOf/=== needs raw LevelItem identity).
-const { selectedItems } = storeToRefs(editor);
+const { selectedItems, selectedEnemies } = storeToRefs(editor);
 /**
- * Enemy selection mirrors `selectedItems` — multi-select via shift/ctrl
- * or rubber-band. Each entry carries its `pageIndex` because enemy
+ * Enemy selection lives in the editor store (alongside `selectedItems`)
+ * so the right-side PropertiesPanel and the EnemyLibrary highlight can
+ * subscribe to it. Each entry carries its `pageIndex` because enemy
  * bytes encode page-local coordinates and the page is direction-
- * dependent. Selection uses REFERENCE equality on `enemy` — group
- * moves mutate `enemy.x/y`, so coordinate-keyed lookups break.
+ * dependent. Selection uses REFERENCE equality on `enemy` — group moves
+ * mutate `enemy.x/y`, so coordinate-keyed lookups break. `shallowRef`
+ * (in the store) keeps the array's top-level mutation reactive while
+ * leaving items untouched, preserving raw identity for the draw loop.
  */
 type EnemySelection = { enemy: EnemyItem; pageIndex: number };
-// shallowRef — critical: `ref()` would recursively wrap stored enemies
-// with reactive proxies, breaking reference identity against the raw
-// enemy objects we iterate over in the draw loop. The `Set.has()` call
-// in the selection-ring pass relies on that identity. shallowRef keeps
-// the array's top-level mutation reactive but leaves items untouched.
-const selectedEnemies = shallowRef<EnemySelection[]>([]);
 
 // Ghost position for drop preview.
 const ghostTile = ref<{ x: number; y: number } | null>(null);

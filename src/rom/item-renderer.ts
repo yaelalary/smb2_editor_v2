@@ -206,7 +206,7 @@ function renderSpecialRegular(
   posX: number, posY: number, regularId: number,
 ): void {
   switch (rawId) {
-    case 14: emit(grid, 0xfe, posX, posY, regularId, 0); break; // star bg sentinel
+    case 14: renderStarBackground(grid, posX, posY, regularId); break;
     case 16: {
       // Big cloud via GetSingDim → type=4.
       const dim = getSingDim(rom, rawId, world, fallbackDim(rawId));
@@ -218,6 +218,94 @@ function renderSpecialRegular(
     case 26: renderHorn(grid, posX, posY, regularId); break;
     case 30: emit(grid, 0xfc, posX, posY, regularId, 0); break; // desert-entrance sentinel
     case 31: renderLargeRedPlatformBg(grid, posX, posY, regularId); break;
+  }
+}
+
+/**
+ * Item 0x0E — "Star background".
+ *
+ * Faithful port of `CreateObject_StarBackground` in Xkeeper0/smb2
+ * src/prg-6-7.asm (dispatch via `CreateObjects_00` $0E). An 8-bit
+ * LCG-ish PRNG scatters `BackgroundTile_StarBg1` (0x88) and `StarBg2`
+ * (0x89) over a region; lookup table is
+ * `[Sky, Star1, Sky, Sky, Sky, Sky, Star2, Sky]` — ~1 cell in 8 becomes
+ * a star, the rest stay sky.
+ *
+ * Geometry quirk (matches vanilla): the dispatch (`JumpToTableAfterJump`)
+ * leaves the Y register at `itemId*2 + 2 = 0x1E` — row 1, col 14 of the
+ * placement page. Sibling handlers (Pillar etc.) do `LDY byte_RAM_E7`
+ * first, but `CreateObject_StarBackground` doesn't, so the first column
+ * written is col 14 (rows 1+2 only, since row-0's Y already passed),
+ * then col 15 (rows 0/1/2), then page wraps and full pages 1..9 are
+ * filled standard 16×3. That's why in-game the leftmost ~14 columns of
+ * the placement page stay un-starred — and the user must place the item
+ * accepting that the anchor area gets nothing.
+ *
+ * The PRNG is reseeded to `(RAM_9=0x31, RAM_A=0x80)` each call, so the
+ * pattern is deterministic and identical between editor and game.
+ *
+ * Sky cells aren't emitted (preserves underlying ground/items in the
+ * editor; functionally equivalent to leaving sky alone in-game).
+ *
+ * One editor-only addition: a forced Star1 at the placement cell
+ * `(posX, posY)`. The routine itself never writes there (Y starts at
+ * 0x1E, never visits row 0 col 0 of the start page), so the anchor
+ * would otherwise be an invisible empty cell — bad UX for
+ * select/move/delete. Marking it with a single Star1 makes the placed
+ * item visible and clickable; this cell is also untouched by the PRNG
+ * loop so there's no conflict.
+ */
+function renderStarBackground(
+  grid: CanvasGrid,
+  posX: number, posY: number, regularId: number,
+): void {
+  const SKY = 0x40;
+  const STAR1 = 0x88;
+  const STAR2 = 0x89;
+  const TABLE = [SKY, STAR1, SKY, SKY, SKY, SKY, STAR2, SKY];
+
+  let ram9 = 0x31;
+  let ramA = 0x80;
+  const pickTile = (): number => {
+    ram9 = (ram9 * 5 + 1) & 0xff;
+    const oldHigh = (ramA & 0x80) !== 0;
+    const oldBit4 = (ramA & 0x10) !== 0;
+    ramA = (ramA << 1) & 0xff;
+    if (oldHigh !== oldBit4) ramA = (ramA + 1) & 0xff;
+    return (ramA ^ ram9) & 0xff;
+  };
+
+  // Editor anchor marker: force a Star at (posX, posY) so the user can
+  // grab the placed item; the ROM routine never writes here (Y_initial
+  // is 0x1E, way past row 0 col 0).
+  emit(grid, STAR1, posX, posY, regularId, 4);
+
+  // Y register simulation, mirroring the ROM. Y_initial = 0x1E (= itemId
+  // 0x0E doubled + 2 by JumpToTableAfterJump).
+  let y = 0x1e;
+  let page = Math.floor(posX / 16);
+  const PAGE_LIMIT = 10; // ROM stops at page 10 (CMP #$A)
+
+  while (page < PAGE_LIMIT) {
+    // Inner loop: write while y < 0x30, advancing y by 0x10 (next row).
+    while (y < 0x30) {
+      const tileId = TABLE[pickTile() & 0x07]!;
+      const col = y & 0x0f;
+      const row = y >> 4;
+      const absX = page * 16 + col;
+      const absY = posY + row;
+      if (tileId !== SKY && absX < grid.width && absY < grid.height) {
+        emit(grid, tileId, absX, absY, regularId, 4);
+      }
+      y += 0x10;
+    }
+    // After inner: y >= 0x30. Reset y = (y mod 16), INY → next column.
+    y = (y & 0x0f) + 1;
+    if ((y & 0x0f) === 0) {
+      // Column wrapped past 15 → advance page, reset y.
+      y = 0;
+      page++;
+    }
   }
 }
 

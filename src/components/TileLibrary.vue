@@ -100,7 +100,7 @@ function getCurrentPalette() {
  * all `0xFF` (the C++ punted with a sentinel) — otherwise the UI shows
  * the hex-id fallback chip instead of the actual sprite.
  */
-const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([15, 23, 26, 31, 56, 57]);
+const CUSTOM_PREVIEW_LIBRARY_IDS: ReadonlySet<number> = new Set([14, 15, 23, 26, 31, 56, 57]);
 
 function hasPreviewTile(itemId: number): boolean {
   if (CUSTOM_PREVIEW_LIBRARY_IDS.has(itemId)) return true;
@@ -209,6 +209,17 @@ function drawTile(el: unknown, libraryId: number): void {
     put(1, 0, d.topright);
     put(0, 1, d.left);
     put(1, 1, d.right);
+  } else if (libraryId === 14) {
+    // Star background (rawId 0x0E) — at runtime fills 3 rows × ~10 pages
+    // with a PRNG-driven sky/star pattern via CreateObject_StarBackground.
+    // For the library preview, just stamp 4 stars in a 4×4 grid using the
+    // BG-atlas star tiles directly (0x88, 0x89, alternating). Conveys
+    // "starfield" at a glance without burning real PRNG state.
+    const put = (x: number, y: number, tileId: number) => {
+      grid.setItem(x, y, { tileId, type: 4, regularId: 14, groundType: 0 });
+    };
+    put(0, 0, 0x88); put(2, 1, 0x89);
+    put(3, 0, 0x89); put(1, 3, 0x88);
   } else if (libraryId === 26) {
     // Vegetable thrower / Horn (rawId 0x1A) — at runtime each placement
     // draws a fixed 2×2 of horn tiles (0x8C..0x8F) via CreateObject_Horn

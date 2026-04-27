@@ -259,6 +259,33 @@ Vanilla coverage (via `scripts/find-item.ts 26`): 7-2·6 (slot 195, Wart's room)
 
 Editor representation: neither the C++ reference tool nor our port renders this item — `renderItem` ([item-renderer.ts:406-424](src/rom/item-renderer.ts)) has no case for `0x1A`, and the `default` branch returns silently for rawId `< 0x30`, so the three horns in 7-2·6 are invisible on the canvas. Same gap exists in `clvldraw_worker.cpp`.
 
+### Star background (item `14` / `0x0E`)
+
+Dispatched via `CreateObjects_00` entry `$0E` → handler `CreateObject_StarBackground` in `Xkeeper0/smb2 src/prg-6-7.asm:2453`. Different family from the other runtime-composed handlers — no fixed shape, no sky-extends-to-ground gate. The cell pattern is driven by an in-routine PRNG and an inherited-Y quirk that shapes the start of the fill.
+
+Tile constants from `src/defs.asm`:
+- `BackgroundTile_Sky = 0x40`
+- `BackgroundTile_StarBg1 = 0x88`
+- `BackgroundTile_StarBg2 = 0x89`
+
+Lookup table indexed by PRNG output mod 8: `[Sky, Star1, Sky, Sky, Sky, Sky, Star2, Sky]` — 6 of 8 buckets are Sky, so on average ~25% of the cells become a star.
+
+PRNG (helper `CreateObject_StarBackground_PickTile`):
+- State: two 8-bit bytes `RAM_9` and `RAM_A`, RESEEDED to `0x31` and `0x80` at every routine entry. The pattern is deterministic and identical across runs and worlds.
+- Per call: `RAM_9 = (RAM_9 * 5 + 1) & 0xFF` (LCG step), `RAM_A << 1` then `+1` iff `(old_bit7 XOR old_bit4)` is 1, output is `RAM_A XOR RAM_9` (low 3 bits used as table index).
+
+Geometry quirk — Y register inherited from dispatch:
+- `JumpToTableAfterJump` (`prg-e-f.asm:337`) leaves the Y register at `(itemId * 2) + 2` (it ASLs the id into Y then INYs twice while reading the dispatch-table address).
+- Sibling handlers in `CreateObjects_00` (Pillar etc.) start with `LDY byte_RAM_E7` to reset Y to the placement offset. `CreateObject_StarBackground` does NOT.
+- Net effect: the very first nametable write happens at `Y = 0x0E*2 + 2 = 0x1E` — row 1, col 14 of the placement page. Only 5 cells are PRNG-written on the placement page (col 14 rows 1+2, col 15 rows 0/1/2). Pages 1..9 (relative to placement) get the standard 16×3 fill.
+- Practical consequence: a star bg placed at the start of a level leaves the leftmost ~14 columns of its anchor page unstarred — visible behavior in vanilla.
+
+Fill extent:
+- Inner loop writes while `Y < 0x30` — at most 3 rows per column (`posY = 0` always in vanilla).
+- Outer terminator: `CMP #$A, BNE Loop` against `byte_RAM_D`, which `IncrementAreaXOffset` updates to `E8 + 1` on page wraps. The routine writes pages `startPage..9` — up to 10 pages worth from the anchor before exiting. Writes past the level's actual page count are off-screen no-ops.
+
+Vanilla coverage (via `scripts/find-item.ts 14`): 23 slots, primarily cave/night sub-levels (W2, W3-2, W5-2, W7). Always at `posY = 0` to maximize visible rows, `posX` typically 0/16/32 (page-aligned).
+
 ### Pattern across `CreateObjects_10` runtime-composed handlers
 
 Every entry in this jump table that draws a "background object that extends to ground" follows the same template:

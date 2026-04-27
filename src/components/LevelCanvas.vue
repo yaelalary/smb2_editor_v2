@@ -1047,6 +1047,27 @@ function draw(canvas: HTMLCanvasElement, b: LevelBlock): void {
       }
     }
 
+    // ── Star background anchor markers ───────────────────────────
+    // The star-bg routine writes its first cell ~14 columns away from
+    // the placement anchor (Y_initial=0x1E quirk), so the anchor itself
+    // has no visual under the star pattern. Without a marker the placed
+    // item is invisible and unclickable. A yellow translucent square at
+    // (tileX, tileY) makes it stand out — same affordance pattern as
+    // the violet pointer chip.
+    for (const item of b.items) {
+      if (item.kind !== 'regular') continue;
+      if (item.itemId !== 14) continue;
+      if (item.tileX < 0 || item.tileY < 0) continue;
+      const isSelected = selectedItems.value.includes(item);
+      const sx = item.tileX * TILE_PX;
+      const sy = item.tileY * TILE_PX;
+      ctx.fillStyle = isSelected ? 'rgba(250, 204, 21, 0.55)' : 'rgba(250, 204, 21, 0.3)';
+      ctx.fillRect(sx, sy, TILE_PX, TILE_PX);
+      ctx.strokeStyle = isSelected ? '#fef08a' : '#facc15';
+      ctx.lineWidth = isSelected ? 1.5 : 1;
+      ctx.strokeRect(sx + 0.5, sy + 0.5, TILE_PX - 1, TILE_PX - 1);
+    }
+
     // ── Pointer markers (page-level scroll-off transitions) ──────
     // Pointer items (`0xF5`) are page-scoped in the ROM bytes — no tile
     // position. But at runtime Mario triggers the transition *via* a

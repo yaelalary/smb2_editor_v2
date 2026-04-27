@@ -254,12 +254,26 @@ describe('renderItem — sentinel items', () => {
     expect(grid.getItem(4, 1).visible).toBe(false);
   });
 
-  it('star bg (rawId 14) writes tileId 0xFE with type=0', () => {
+  it('star bg (rawId 14) scatters BG star tiles via the PRNG pattern', () => {
     const rom = makeSyntheticRom();
     const grid = new CanvasGrid(16, 15, 3, 1, true);
-    renderItem(grid, regularItem(14, 2, 2), rom, 0, testHeader());
-    expect(grid.getItem(2, 2).tileId).toBe(0xfe);
-    expect(grid.getItem(2, 2).type).toBe(0);
+    renderItem(grid, regularItem(14, 0, 0), rom, 0, testHeader());
+    // The PRNG seed is fixed (RAM_9=0x31, RAM_A=0x80) so the pattern is
+    // deterministic. Sky cells aren't emitted; only Star1 (0x88) and
+    // Star2 (0x89) are written with type=4 (BG atlas).
+    let starCount = 0;
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 16; x++) {
+        const c = grid.getItem(x, y);
+        if (!c.visible) continue;
+        expect([0x88, 0x89]).toContain(c.tileId);
+        expect(c.type).toBe(4);
+        starCount++;
+      }
+    }
+    // ~1/4 of cells become stars (2 of 8 PRNG buckets are non-sky).
+    expect(starCount).toBeGreaterThan(0);
+    expect(starCount).toBeLessThan(48); // 16 × 3 = 48 cells max
   });
 
   it('red bg (rawId 31) draws 12-tile-wide rows extending downward', () => {

@@ -14,7 +14,7 @@ import { computed, nextTick, ref, toRaw } from 'vue';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
 import { useEditorStore } from '@/stores/editor';
-import { ITEM_NAMES } from '@/rom/nesleveldef';
+import { ITEM_NAMES, convertRegular } from '@/rom/nesleveldef';
 import { slotLabel, slotLabelVerbose, slotWorld, slotLevel, getFxForSlot } from '@/rom/level-layout';
 import { getWorldGfx } from '@/rom/tile-reader';
 import { MAX_LEVELS, ENTRANCE_ITEM_IDS, ENTERABLE_JAR_IDS, VINE_LADDER_ITEM_IDS } from '@/rom/constants';
@@ -459,7 +459,11 @@ const itemName = computed<string>(() => {
   const it = item.value;
   if (!it) return '';
   if (it.kind === 'pointer') return 'Scroll-off transition';
-  return ITEM_NAMES[it.itemId] ?? `Item #${it.itemId}`;
+  // Extended items (rawId >= 0x30) encode size in the low nibble; the
+  // canonical name lives at the library id (= convertRegular(rawId)).
+  // E.g. rawId 0x44 (X-Blocks[2] with size=4) → libraryId 49 → "X-Blocks [2]".
+  const nameId = convertRegular(it.itemId);
+  return ITEM_NAMES[nameId] ?? `Item #${it.itemId}`;
 });
 </script>
 

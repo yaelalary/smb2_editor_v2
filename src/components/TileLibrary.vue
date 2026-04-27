@@ -10,13 +10,14 @@
  *   fx=0 → atlas 4, fx=1 → atlas 5, fx=2 → atlas 6, fx=3 → atlas 7.
  * Colors are remapped through the level's NES palette.
  */
-import { onMounted, ref, watch, nextTick } from 'vue';
+import { computed, onMounted, ref, watch, nextTick } from 'vue';
 import BasePanel from './common/BasePanel.vue';
 import { ITEM_CATEGORIES, DRAG_MIME } from '@/rom/item-categories';
 import { activeDrag, hideNativeDragImage } from '@/ui/drag-state';
-import { ITEM_NAMES, ITEM_DIM, getItemDimTiles } from '@/rom/nesleveldef';
+import { ITEM_NAMES, ITEM_DIM, convertRegular, getItemDimTiles } from '@/rom/nesleveldef';
 import { useRomStore } from '@/stores/rom';
 import { useHistoryStore } from '@/stores/history';
+import { useEditorStore } from '@/stores/editor';
 import { getFxForSlot } from '@/rom/level-layout';
 import { getWorldGfx, getMasvDim, getVertDim, getSingDim } from '@/rom/tile-reader';
 import { readLevelPalette } from '@/rom/palette-reader';
@@ -34,8 +35,25 @@ import {
 
 const rom = useRomStore();
 const history = useHistoryStore();
+const editor = useEditorStore();
 const atlasReady = ref(false);
 const drawGeneration = ref(0);
+
+/**
+ * Library ID matching the currently-selected canvas item, or null when
+ * 0 or >1 items are selected. Used to highlight the corresponding card
+ * so the user can see at a glance "this is what I picked". Extended
+ * items (rawId >= 0x30) collapse via `convertRegular` so a sized
+ * X-Blocks (0x44) maps back to libraryId 49, etc.
+ */
+const highlightedLibraryId = computed<number | null>(() => {
+  void history.revision;
+  const sel = editor.selectedItems;
+  if (sel.length !== 1) return null;
+  const it = sel[0]!;
+  if (it.kind !== 'regular' && it.kind !== 'entrance') return null;
+  return convertRegular(it.itemId);
+});
 
 onMounted(async () => {
   await Promise.all([preloadAllAtlases(), preloadHerbOverlays()]);
@@ -46,6 +64,25 @@ onMounted(async () => {
 watch(
   () => [rom.activeSlot, history.revision],
   () => { drawGeneration.value++; nextTick(() => { drawGeneration.value++; }); },
+);
+
+// Auto-scroll the highlighted card into view whenever the canvas selection
+// changes. Mirrors the safe pattern used in `LevelCanvas` for "Go to
+// destination →": await `nextTick` (Vue patch done) then two RAFs
+// (browser layout + paint done) before reading the DOM. Doing the
+// `querySelector` + `scrollIntoView` synchronously inside `nextTick`
+// alone races the App-level component-update cycle and can throw
+// "Cannot set properties of null (setting '__vnode')".
+watch(
+  () => highlightedLibraryId.value,
+  async (id) => {
+    if (id === null) return;
+    await nextTick();
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const el = document.querySelector<HTMLElement>(`[data-library-id="${id}"]`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  },
 );
 
 function getCurrentPalette() {
@@ -388,12 +425,16 @@ function drawTile(el: unknown, libraryId: number): void {
           <div
             v-for="itemId in cat.items"
             :key="itemId"
+            :data-library-id="itemId"
             :draggable="true"
             :title="itemName(itemId)"
-            class="flex items-center gap-2 px-2 py-1.5 rounded
-                   cursor-grab active:cursor-grabbing
-                   hover:bg-panel-subtle transition-colors
-                   border border-transparent hover:border-panel-border"
+            :class="[
+              'flex items-center gap-2 px-2 py-1.5 rounded scroll-mt-10 scroll-mb-2',
+              'cursor-grab active:cursor-grabbing transition-colors border',
+              highlightedLibraryId === itemId
+                ? 'bg-accent/20 border-accent ring-1 ring-accent'
+                : 'border-transparent hover:bg-panel-subtle hover:border-panel-border',
+            ]"
             @dragstart="(e) => onDragStart(e, itemId)"
             @dragend="onDragEnd"
           >

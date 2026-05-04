@@ -449,6 +449,38 @@ function renderLargeRedPlatformBg(
   }
 }
 
+/**
+ * Drawbridge chain — vid 8 (Whale) repurposed in W7.
+ *
+ * In `Xkeeper0/smb2 src/prg-6-7.asm:2554`, `CreateObject_WhaleOrDrawBridgeChain`
+ * checks `CurrentWorldTileset` and jumps to `CreateObject_DrawBridgeChain`
+ * when it equals 6 (= W7). Same item byte (`0xB?`), totally different
+ * routine. Drives the visible chains in 7-2·1 and friends.
+ *
+ * The chain routine (prg-6-7.asm:3215) writes `BackgroundTile_DrawBridgeChain`
+ * (`0x58`) at `byte_RAM_E7`, then advances Y by `+0x0F` per iteration —
+ * which in the nametable layout is `(row + 1, col − 1)`, hence the
+ * diagonal "down-and-left" segments. Iteration count = `byte_RAM_50D`,
+ * the size nibble of the rawId (= rawId & 0x0F). When size is `0` the
+ * counter underflows to `0xFF` so the loop runs 256 times — bounds are
+ * clipped here by the grid.
+ */
+function renderDrawBridgeChain(
+  grid: CanvasGrid,
+  rawId: number,
+  posX: number, posY: number, regularId: number,
+): void {
+  const TILE_CHAIN = 0x58;
+  const size = rawId & 0x0f;
+  const count = size === 0 ? 256 : size;
+  for (let i = 0; i < count; i++) {
+    const x = posX - i;
+    const y = posY + i;
+    if (x < 0 || y >= grid.height) break;
+    emit(grid, TILE_CHAIN, x, y, regularId, 4);
+  }
+}
+
 function renderEntrance(
   grid: CanvasGrid, rom: Uint8Array, rawId: number, world: number,
   posX: number, posY: number, regularId: number,
@@ -544,7 +576,18 @@ export function renderItem(
         case 10: case 11:
           renderHorizontal(grid, rom, rawId, world, item.tileX, item.tileY, regularId);
           return;
-        case 8: case 9: case 12:
+        case 8:
+          // W7 (CurrentWorldTileset === 6) re-routes the Whale dispatch
+          // to DrawBridgeChain — same item byte, different runtime routine.
+          // See `CreateObject_WhaleOrDrawBridgeChain` in `Xkeeper0/smb2
+          // src/prg-6-7.asm:2554`.
+          if (world === 6) {
+            renderDrawBridgeChain(grid, rawId, item.tileX, item.tileY, regularId);
+          } else {
+            renderMassive(grid, rom, rawId, world, item.tileX, item.tileY, regularId);
+          }
+          return;
+        case 9: case 12:
           renderMassive(grid, rom, rawId, world, item.tileX, item.tileY, regularId);
           return;
       }

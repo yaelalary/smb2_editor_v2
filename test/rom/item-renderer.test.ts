@@ -194,6 +194,33 @@ describe('renderItem — horizontal items (GetHorzDim)', () => {
 // ─── Sentinel items (pyramid, star bg) ─────────────────────────────
 
 describe('renderItem — sentinel items', () => {
+  it('whale in W7 (slot 6×30=180+) renders as DrawBridgeChain (diagonal 0x58 segments)', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(50, 15, 0, 4, true);
+    // rawId 0xB5: vid 8 (whale), size 5. Slot 190 = W7-2·1, world index 6.
+    renderItem(grid, regularItem(0xb5, 10, 2), rom, 190, testHeader());
+    // 5 segments stepping (-1, +1) from anchor (10, 2): (10,2), (9,3), (8,4), (7,5), (6,6).
+    expect(grid.getItem(10, 2).tileId).toBe(0x58);
+    expect(grid.getItem(9, 3).tileId).toBe(0x58);
+    expect(grid.getItem(8, 4).tileId).toBe(0x58);
+    expect(grid.getItem(7, 5).tileId).toBe(0x58);
+    expect(grid.getItem(6, 6).tileId).toBe(0x58);
+    // BG-atlas (type 4) throughout.
+    expect(grid.getItem(10, 2).type).toBe(4);
+    // 6th cell (5, 7) should NOT be drawn — only `size` segments.
+    expect(grid.getItem(5, 7).visible).toBe(false);
+  });
+
+  it('whale in non-W7 worlds keeps the Whale render (no chain swap)', () => {
+    const rom = makeSyntheticRom();
+    const grid = new CanvasGrid(50, 15, 0, 1, true);
+    // Slot 100 = W4 = world 3, NOT 6 → renderMassive whale path.
+    renderItem(grid, regularItem(0xb5, 10, 2), rom, 100, testHeader());
+    // Whale uses BG tiles from getMasvDim, NOT 0x58 chain. The exact tile
+    // depends on synthetic ROM, but should NOT be 0x58 at the anchor.
+    expect(grid.getItem(10, 2).tileId).not.toBe(0x58);
+  });
+
   it('horn / vegetable thrower (rawId 26) draws a fixed 2×2 from tiles 0x8C-0x8F', () => {
     const rom = makeSyntheticRom();
     const grid = new CanvasGrid(16, 15, 3, 1, true);

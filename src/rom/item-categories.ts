@@ -49,6 +49,12 @@ export const ITEM_CATEGORIES: ReadonlyArray<ItemCategory> = [
   },
   {
     label: 'Special',
-    items: [26, 27, 44, 46, 56, 60],
+    // Item 27 ("???" = direct DrawBridgeChain dispatch) is omitted: it's
+    // dead code in vanilla — its size byte (`byte_RAM_50D`) is left
+    // uninitialized by the no-size dispatch path, so the chain length is
+    // undefined. The functional way to place a chain is via item 56
+    // (Whale), which the runtime auto-converts to DrawBridgeChain only
+    // in W7 (`CurrentWorldTileset == 6`).
+    items: [26, 44, 46, 56, 60],
   },
 ];

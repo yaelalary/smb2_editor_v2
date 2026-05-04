@@ -157,6 +157,20 @@ The enemy-slot entry appears to be vestigial — present in the table (so the ed
 
 Sprites from the enemy table (atlas `gfx+10`) render on the **sprite layer** where tile `0` is transparent. Level items from the item table render on the **background layer** where tile `0` is the level's BG color. This is why enemy-slot visuals look semi-transparent in the editor while item-slot visuals look filled — it's a faithful reflection of how the NES composites the two layers, not a rendering bug. Reference: [nesleveldef.ts:714-718](src/rom/nesleveldef.ts#L714-L718) for the enemy-sprite table.
 
+### FallingLogs / "Rolling beam" cycle (enemy id `59` / `0x3B`)
+
+Two-phase animation in `EnemyBehavior_FallingLogs` (`src/prg-2-3.asm:5217`). `EnemyArray_B1[X]` holds the phase, `EnemyVariable[X]` holds the saved initial Y from placement.
+
+Phase 0 (rising, invisible): `ObjectAttributes` sets `BehindBackground` so the sprite renders behind BG tiles, velocity = `0xFE` (= `-2` in Q4.4 = `-0.125` px/frame). When `currentY <= initialY - 12` the apex is reached: clear `BehindBackground`, set velocity = `+4` (= `+0.25` px/frame), increment `B1` to phase 1.
+
+Phase 1 (visible falling): every 8 frames (`byte_RAM_10 & 7 == 0`) `INC ObjectYVelocity` (gravity = `+1/16` px/frame²). When `currentY >= 0xF0` (off-screen bottom) reset `currentY = initialY` and `B1 = 0` — cycle restarts.
+
+All constants are hardcoded; no level-data parameters control rise distance, fall speed, or reset threshold. Placement `(posX, posY)` is the rest Y from which the log first rises 12 px before becoming visible at the apex, then falls. `posX` never changes — there is no X-velocity update in the routine. Editor name in `ENEMY_NAMES[59]` is "Rolling beam" (legacy from the C++ tool); the disassembly label `FallingLogs` is more accurate to the visual.
+
+### Enemy spawn timing is per-on-screen, not per-level-load
+
+Enemy `Init` routines (e.g. `EnemyInit_FallingLogs`, `EnemyInit_WhaleSpout`) run when the enemy enters Mario's active spawn window — i.e. when it scrolls onto the screen — not at level load. Two enemies of the same type in one level therefore start their animation cycles independently: phase is determined by Mario's approach order/timing, not by placement coordinates relative to each other. This is why a row of FallingLogs can appear visually out-of-sync even though their placements look uniform.
+
 ## Vines and ladders
 
 ### No routing bytes
